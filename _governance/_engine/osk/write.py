@@ -38,7 +38,7 @@ from .core import (ROOT, CANDIDATES, PINS, ROUTING, ID_RE, CASE_RE, RID_RE,
                    ledger_read, mutation_lock,
                    new_node_id, now_kst, posix_rel, resolve_in_root,
                    resolve_one, sha256_bytes, sha256_file, atomic_write)
-from . import approvals, contract, evictions, graph, rechecks, signatures
+from . import approvals, contract, evictions, graph, rechecks, signatures, workspaces
 
 GOVERNANCE = ("governance",)             # 표면 쓰기 제외 (설계 D8)
 CANDIDATE_TYPES = ("contradiction", "duplication", "competition",
@@ -478,10 +478,12 @@ def _new_cluster_gate(dest: str, dest_dir: Path | None, doing: str) -> Path:
     raise WriteError(
         "새 군집 신설 — 1차 확인 거부 (쓰지 않았다)",
         [f"`{dest}`는 아직 없는 군집이라 {doing} **새 군집을 만든다**. "
-         f"사용자와 합의된 신설인지 확인하라 — 허락을 확인했으면 **같은 "
-         f"요청을 그대로 다시** 보내라(1시간 안의 재시도는 통과한다). 기존 "
-         f"군집을 쓰려던 것이면 여기서 골라라: "
-         f"{', '.join(_cluster_names()) or '없음'}"])
+         f"그 신설이 시행령이 맡긴 것인지 확인한 뒤 **같은 요청을 그대로 다시** "
+         f"보내라(1시간 안의 재시도는 통과한다) — 노드를 써서 세션의 소속 scope를 "
+         f"여는 것은 시행령 §3 9항, 주기 처리가 domain을 여는 것은 §3 1항을 따른다. "
+         f"노드를 옮겨 scope를 여는 것과 그 밖의 최상위 군집 신설은 사용자의 허락을 "
+         f"확인한 뒤 다시 보낸다(Mechanism §6-2 3항). 기존 군집을 쓰려던 것이면 "
+         f"여기서 골라라: {', '.join(_cluster_names()) or '없음'}"])
 
 
 def _open_cases() -> list[str]:
@@ -826,8 +828,9 @@ def canonical_session(session: str | None,
 def resolve_session(session: str | None) -> str | None:
     """세션 키 → scope 이름. 별칭을 접은 뒤 판정하며, 인과 극대가 유일할 때만
     확정이고 분기(다기기 동시 최초-확정)면 미확정으로 두어 `space`를 요구한다
-    — fail-closed."""
-    if not session:
+    — fail-closed. 일회성 작업 공간의 키는 그 키에 선 결속도 따르지 않는다(Mechanism
+    §6-2 6항)."""
+    if not session or workspaces.is_one_off(session):
         return None
     try:
         recs = ledger_read(ROUTING)
@@ -858,7 +861,13 @@ def bind_after_write(result: dict, session: str, scope: str, reason: str = "") -
     재시도하고, 그 재시도는 이름 충돌·중복 라운드로 거부된다(v4 감사 실측:
     공유 위반으로 라우팅 대장 append가 실패한 경우). 대장 append는 기록된 뒤에도
     (fsync) 실패할 수 있으므로 "미기록"이 아니라 "확인 불가"다 —
-    `evictions._after_node_write`의 처분 영수증과 같은 규율."""
+    `evictions._after_node_write`의 처분 영수증과 같은 규율. 일회성 작업 공간의 키는
+    결속하지 않는다 — 그 착지는 그 대화에만 적용된다(Mechanism §6-2 6항)."""
+    if workspaces.is_one_off(session):
+        result["binding"] = {
+            "state": "not_bound", "scope": scope,
+            "note": "일회성 작업 공간의 세션 키라 결속하지 않았다 — 다음 쓰기에도 space를 준다"}
+        return False
     try:
         bind_session(session, scope, reason)
         return True
@@ -1093,8 +1102,10 @@ def _create_node_locked(title: str, summary: str, body: str, drafter: str,
         raise WriteError(
             "착지가 정해지지 않았다 — space를 지정하라. "
             f"지금 쓸 수 있는 군집: {', '.join(_cluster_names()) or '없음'}. "
-            "session도 함께 주면(저장소 이름처럼 세션이 바뀌어도 같은 값) "
-            "그 scope로 결속되어 다음부터 space 없이 착지한다")
+            + ("이 세션은 일회성 작업 공간이라 결속하지 않는다 — 쓸 때마다 space를 준다"
+               if workspaces.is_one_off(session) else
+               "session도 함께 주면(저장소 이름처럼 세션이 바뀌어도 같은 값) "
+               "그 scope로 결속되어 다음부터 space 없이 착지한다"))
     dest_dir = resolve_in_root(dest)
     if dest_dir is None or not dest_dir.is_dir():
         # 신설 후보 — 막는 대신 한 번 묻는다. 통과하면 디렉토리가 생긴다.

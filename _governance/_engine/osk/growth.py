@@ -518,7 +518,11 @@ def prompt(planned: dict | None = None, limit: int = 3) -> str:
         "carries hub_tree, its scope's hubs with their direct node counts: descend from the top hub "
         "to the deepest hub that covers the topic and link the node there. That cluster path is "
         "create_node.space and its last segment is distill.hub. Hub differentiation belongs to the "
-        "organization review: do not open sub-clusters; propose one in the review reason if needed.\n"
+        "organization review: do not open sub-clusters; propose one in the review reason if needed. "
+        "A Scope job without hub_tree has no scope yet: follow its prompt's membership order "
+        "(Bylaws §3 9). Close it as no_value when nothing is worth keeping; otherwise its first "
+        "cite_round with space fixes its landing, and Person-only knowledge goes to Person Space "
+        f"with its rounds cited under space `{core.PERSON}`.\n"
         # 두 경우를 한 문장에 담았더니 정기 실행 작업자가 자신을 Stop fork로 여겨 읽지 않고
         # 판정했다(v5.0.0 운영 관측). 엔진은 어느 쪽인지 알므로 그 경우의 문장만 싣는다.
         + ("Scope jobs: pending_refs starting with native: are original turns of the conversation "

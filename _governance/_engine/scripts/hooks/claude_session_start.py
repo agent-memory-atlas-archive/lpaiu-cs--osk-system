@@ -236,8 +236,9 @@ def _memory_block(scope_memory, key: str, st: dict | None = None) -> str:
         f"hash: {st['hash']}\n---\n{text}")
 
 
-def _bootstrap(key: str, *, bound: bool, ident: tuple | None = None) -> str:
+def _bootstrap(key: str, *, bound: bool, ident: tuple | None = None, workspace: dict | None = None) -> str:
     arg = json.dumps(key, ensure_ascii=False)
+    workspace = workspace or {}
     # `cite_round(conversation=…)` names this conversation by the pair below.
     conversation = (f" · conversation={json.dumps(ident[0] + '/' + ident[1], ensure_ascii=False)}"
                     if ident else "")
@@ -247,7 +248,11 @@ def _bootstrap(key: str, *, bound: bool, ident: tuple | None = None) -> str:
             "기억을 묻는 질문에는 `search`를 먼저 쓴다. "
             + ("아래 scope 기억을 통합의 출발점으로 삼는다."
                if bound else "아직 scope 결속이 없다. 착지를 추측하지 말고 overview의 "
-               "군집에서 해당 프로젝트를 확인한 뒤 scope_memory를 읽어라."))
+               "군집에서 해당 프로젝트를 확인한 뒤 scope_memory를 읽어라.")
+            + (" 이 작업 폴더는 일회성 작업 공간이라 세션 키를 결속하지 않고 그 키에 선 결속도 따르지 "
+               "않는다(Mechanism §6-2 6항) — 노드나 인용을 쓸 때 space를 명시하고, 그 착지는 이 대화에만 "
+               "적용된다." if workspace.get("one_off") else "")
+            + (f" 작업 공간 판별: {workspace['warning']}" if workspace.get("warning") else ""))
 
 
 def _budget(env: dict, host=None) -> int | None:
@@ -483,7 +488,12 @@ def main() -> None:
         notice = Block("notice", notice, 40, label="새 릴리스 알림(overview의 update)",
                        on_shown=notified)
         scope = write.resolve_session(key)
-        bootstrap = Block("bootstrap", _bootstrap(key, bound=bool(scope), ident=ident))
+        try:
+            from osk import integration
+            workspace = integration.status(*ident)["workspace"] if ident else None
+        except Exception:
+            workspace = None    # 판별을 못 읽어도 시작 안내는 싣는다
+        bootstrap = Block("bootstrap", _bootstrap(key, bound=bool(scope), ident=ident, workspace=workspace))
         try:
             recovery = _recovery(scope_memory, key)
         except Exception:

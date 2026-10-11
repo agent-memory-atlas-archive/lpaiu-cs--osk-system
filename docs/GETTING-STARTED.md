@@ -467,13 +467,12 @@ Without fork reviews, it also says `[osk 검토 경고 — subscription fork CLI
 configured. …]`. That means reviews happen in this session at your 9th and 15th
 message, which is normal.
 
-Until the scope is bound, this conversation's turns are not tracked: there is no
-scope to cite them into. From your second message on, the hook text therefore
-carries a one-line capture notice, `[osk 포착 대기 — WriteError: 착지 미정 …]`
-("capture waiting — landing undecided"), on every message, although no review
-is due. With fork reviews on it reads `[osk 백그라운드 검토 대기 — …]` instead.
-It stops after step 2 below. The review warning stays until you set up fork
-reviews.
+This conversation's turns are tracked even before the scope is bound: tracking
+writes nothing to the vault. When something is worth keeping, the conversation's
+review decides which scope it belongs to (Bylaws §3 9), and the conversation's
+first citation fixes its landing. Once you create the scope in step 2 below,
+this repository's writes land in it. The review warning stays until you set up
+fork reviews.
 
 1. **Look around.** Prompt:
 
@@ -594,7 +593,7 @@ out of 1,500, and M characters still free (`여유`).
 | `[osk 검토 경고 — <reason>. …]` | Background fork reviews are not running, for the reason given. Reviews happen in this session at user turns 9 and 15. Normal if you have not set up fork reviews. |
 | `[osk 대화 검토 — …]` | Fork reviews are on: one runs after every 9 successful final answers. |
 | `[osk 케이던스 — user 턴 N]` | A review is due. At turn 9 the agent reviews along with its next tool call. At turn 15 it may spend a whole turn on the review. |
-| `[osk 포착 대기 — <error>. …]` | Tracking this conversation's turns is stuck. Normal before the scope is bound (Step 5). The wait and the count are kept, and turns 9 and 15 carry the review text as usual. If it continues after binding, see `capture_blocked` in the CLI `status`. |
+| `[osk 포착 대기 — <error>. …]` | Tracking this conversation's turns is stuck. The wait and the count are kept, and turns 9 and 15 carry the review text as usual. If it continues, see `capture_blocked` in the CLI `status`. |
 | `[osk 대화별 통합 대기 — …]` | This conversation's review queue, with instructions for the agent. |
 | `[osk 참조·조직 검토]` | Work to tidy links and hubs among this scope's nodes. |
 | `[osk 정돈 — …]`, `[osk 정돈이 밀렸다 — …]` | Evicted scope-memory lines waiting to be settled. `밀렸다` means overdue: older than 14 days. |
@@ -1019,7 +1018,7 @@ library.
 | Windows: `ZoneInfoNotFoundError` for `Asia/Seoul` | The venv lacks the `tzdata` package. Reinstall the requirements into it. |
 | `claude mcp list` shows no *Connected*, or Codex cannot start the server | The registered command must use the vault's `.venv` Python (`.venv/Scripts/python.exe` on Windows). Run the same command in a terminal to see the error. A healthy server prints nothing and waits for a client; press Ctrl+C to stop it. |
 | No osk text at session start | Claude Code loads hooks only at startup, so open a new session and check `/hooks`. In Codex, trust the entries in `/hooks`. In both, registering MCP does not install the hooks, and each hook command must use the vault's `.venv` Python. Run the hand test from Step 3b. `doctor` shows which hook is registered but never ran on this device. |
-| Hook text repeats `착지 미정` or `scope 결속이 없다` | This repository's key is not bound yet. Create or choose its scope (Step 5, item 2). |
+| Hook text repeats `scope 결속이 없다` | This repository's key is not bound yet. Create or choose its scope (Step 5, item 2). |
 
 **Write refusals your agent may report**
 

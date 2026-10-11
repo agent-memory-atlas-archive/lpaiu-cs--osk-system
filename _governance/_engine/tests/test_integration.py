@@ -916,10 +916,10 @@ class IntegrationTests(unittest.TestCase):
     def test_unbound_conversation_can_choose_a_stable_session_without_binding_generic_key(self):
         self.transcript(claude_round(self.sid, 1))
         generic = self.sid + '-unbound'
-        failed = it.capture('claude', self.sid, str(self.path), generic)
-        self.assertFalse(failed['ok'])
-        self.assertEqual(failed["capture_recovery"]["phase"], "landing")
-        self.assertTrue(failed["capture_recovery"]["next_action"])
+        # Tracking does not wait for a landing (#179): the turns are tracked and nothing is bound.
+        tracked = it.capture('claude', self.sid, str(self.path), generic)
+        self.assertTrue(tracked['ok'], tracked)
+        self.assertEqual((tracked['captured_rounds'], tracked['space']), (1, None))
         captured = it.capture('claude', self.sid, str(self.path), 'capture-tests', '00_Scope/Capture')
         self.assertTrue(captured['ok'], captured)
         self.assertEqual(captured['captured_rounds'], 1)
@@ -2231,6 +2231,150 @@ print(json.dumps({'record': st['record'], 'refs': st['pending_refs'], 'appended'
         state = it._load(path, "claude", self.sid)
         self.assertEqual((state["reviewed_prompt_count"], state["response_growth"]["attempted_count"]), (6, 6))
         self.assertEqual(it.tick("claude", self.sid)["unreviewed_prompts"], 1)
+
+    # ── 소속 scope 없는 대화 (#179 · 시행령 §3 9항 · Mechanism §6-2 6항·§9-4 3항) ──
+
+    def forget(self, *sids):
+        for sid in sids:
+            self.addCleanup(it.state_path("claude", sid).unlink, missing_ok=True)
+
+    def test_an_unlanded_conversation_is_tracked_and_its_first_citation_lands_it(self):
+        key = self.sid + "-key"
+        self.forget(self.sid)
+        self.transcript(claude_round(self.sid, 1) + claude_round(self.sid, 2))
+        st = it.capture("claude", self.sid, str(self.path), key)
+        self.assertTrue(st["ok"], st)
+        self.assertEqual((st["captured_rounds"], st["space"]), (2, None))
+        self.assertIsNone(write.resolve_session(key))       # tracking writes nothing and binds nothing
+        self.assertIn("시행령 §3 9항", it.prompt("claude", self.sid, include_organization=False)["text"])
+        with self.assertRaisesRegex(write.WriteError, "착지 미정"):
+            it.cite(f"claude/{self.sid}", quote="question 1")
+        cited = it.cite(f"claude/{self.sid}", quote="question 1", space="00_Scope/Capture")
+        self.assertTrue(cited["round_ref"].startswith("00_Scope/Capture/_cited/"), cited)
+        self.assertEqual(it.status("claude", self.sid)["space"], "00_Scope/Capture")
+        self.assertEqual(write.resolve_session(key), "Capture")   # an ordinary key binds on its first write
+        self.assertNotIn("시행령 §3 9항", it.prompt("claude", self.sid, include_organization=False)["text"])
+        with self.assertRaisesRegex(ValueError, "already landed"):
+            it.cite(f"claude/{self.sid}", quote="question 2", space="00_Scope/W1")
+        with self.assertRaisesRegex(ValueError, "cite into that scope"):
+            it.cite(f"claude/{self.sid}", quote="question 2", space="00_Person")
+
+    def test_no_value_closes_only_the_judged_turns_and_a_new_turn_reopens(self):
+        key = self.sid + "-key"
+        self.forget(self.sid)
+        self.transcript(claude_round(self.sid, 1))
+        st = it.capture("claude", self.sid, str(self.path), key)
+        done = it.acknowledge("claude", self.sid, st["through"], "no_value", "a one-off question")
+        self.assertEqual((done["reviewed_rounds"], done["pending"], done["space"]), (1, False, None))
+        self.assertIsNone(write.resolve_session(key))
+        self.transcript(claude_round(self.sid, 1) + claude_round(self.sid, 2))
+        again = it.capture("claude", self.sid, str(self.path), key)
+        self.assertTrue(again["pending"], again)
+        self.assertEqual(again["pending_refs"], [raw.native_ref("claude", self.sid, "user-2")])
+        job = it.prompt("claude", self.sid, include_organization=False)
+        self.assertNotEqual(job["through"], st["through"])
+        self.assertIn("시행령 §3 9항", job["text"])
+
+    def test_catchup_tracks_every_waiting_conversation_before_it_selects(self):
+        # Capturing costs no model. It used to stop once the job budget filled, so a conversation
+        # reopened by a new turn behind it was never tracked and never selected.
+        ended = time.time() - it.ENDED_AFTER - 60
+        talks = {}
+        for name, at in (("oldest", 1_000_000_000), ("reopened", 1_000_100_000)):
+            sid = f"{self.sid}-{name}"
+            path = Path(TMP.name) / f"{sid}.jsonl"
+            path.write_text("".join(json.dumps(r) + "\n" for r in stamped(claude_round(sid, 1), at)),
+                            encoding="utf-8")
+            talks[name] = sid, path, it.capture("claude", sid, str(path), "capture-tests")
+            self.forget(sid)
+        sid, path, st = talks["reopened"]
+        it.acknowledge("claude", sid, st["through"], "no_value", "fixture turn")
+        path.write_text("".join(json.dumps(r) + "\n" for r in stamped(
+            claude_round(sid, 1) + claude_round(sid, 2), 1_000_100_000)), encoding="utf-8")
+        for _, p, _ in talks.values():
+            os.utime(p, (ended, ended))
+        first = it.catchup(1)
+        captured = {c["conversation_id"]: c for c in first["captures"]}
+        self.assertEqual(captured[sid]["appended"], 1, first)
+        self.assertEqual([j["conversation_id"] for j in first["jobs"]], [talks["oldest"][0]])
+        job = first["jobs"][0]
+        it.acknowledge("claude", job["conversation_id"], job["through"], "no_value", "fixture turn")
+        self.assertEqual([j["conversation_id"] for j in it.catchup(1)["jobs"]], [sid])
+
+    def test_a_one_off_workspace_key_is_neither_bound_nor_followed(self):
+        from osk import workspaces
+        root = Path(TMP.name) / f"{self.sid}-root"
+        core.ledger_append(workspaces.LEDGER, {"kind": "rule", "harness": "claude", "version": "2.1.281",
+                                               "root": str(root), "shape": r"\d{4}-\d{2}-\d{2}/[^/]+"})
+        self.addCleanup(workspaces.LEDGER.unlink, missing_ok=True)
+        key = self.sid + "-chat"
+
+        def talk(sid, folder, version="2.1.281"):
+            cwd = root / folder
+            cwd.mkdir(parents=True, exist_ok=True)
+            path = Path(TMP.name) / f"{sid}.jsonl"
+            path.write_text("".join(json.dumps({**r, "cwd": str(cwd), "version": version}) + "\n"
+                                    for r in claude_round(sid, 1)), encoding="utf-8")
+            self.forget(sid)
+            return it.capture("claude", sid, str(path), key)
+
+        write.bind_session(key, "Capture", "a binding made before the rule")
+        st = talk(self.sid, f"2026-10-11/{key}")
+        self.assertTrue(st["ok"], st)
+        self.assertEqual((st["workspace"]["one_off"], st["space"]), (True, None))
+        self.assertNotIn("warning", st["workspace"])
+        self.assertIsNone(write.resolve_session(key))            # the earlier binding is not followed
+        rows = len(core.ledger_read(core.ROUTING))
+        cited = it.cite(f"claude/{self.sid}", quote="question 1", space="00_Scope/Capture")
+        self.assertEqual(cited["binding"]["state"], "not_bound", cited)
+        self.assertEqual(len(core.ledger_read(core.ROUTING)), rows)
+        self.assertEqual(it.status("claude", self.sid)["space"], "00_Scope/Capture")
+        # another conversation in a folder of the same name is its own
+        self.assertIsNone(talk(self.sid + "-other", f"2026-10-12/{key}")["space"])
+        with self.assertRaisesRegex(write.WriteError, "일회성 작업 공간"):
+            write.create_node(self.sid + " node", "summary", "body", "gpt-6-astra", session=key)
+        odd = talk(self.sid + "-odd", "artifacts/x")
+        self.assertTrue(odd["workspace"]["one_off"])
+        self.assertIn("규칙에 없는 모양", odd["workspace"]["warning"])
+        self.assertIn("판본", talk(self.sid + "-newer", f"2026-10-13/{key}", "9.9.9")["workspace"]["warning"])
+        (root / "2026-10-14" / "repo" / ".git").mkdir(parents=True)
+        self.assertFalse(talk(self.sid + "-repo", "2026-10-14/repo")["workspace"]["one_off"])
+
+    def test_a_person_only_conversation_cites_and_distills_into_person_space(self):
+        from osk import distillation
+        key = self.sid + "-key"
+        self.forget(self.sid)
+        self.transcript(claude_round(self.sid, 1) + claude_round(self.sid, 2))
+        it.capture("claude", self.sid, str(self.path), key)
+        cited = it.cite(f"claude/{self.sid}", quote="question 1", space="00_Person")
+        self.assertTrue(cited["round_ref"].startswith("00_Person/_cited/.records/"), cited)
+        self.assertIsNone(it.status("claude", self.sid)["space"])
+        self.assertIsNone(write.resolve_session(key))
+        self.assertIn("question 1", raw.read_round(cited["round_ref"])["text"])
+        hub = ROOT / "00_Person" / "Habits" / "Habits.md"
+        hub.parent.mkdir(parents=True, exist_ok=True)
+        hub.write_text('---\nid: "260801-zzzz-hbit"\ncreated: "2026-08-01 00:00 (KST)"\n'
+                       'updated: "2026-08-01 00:00 (KST)"\nauthor: "agent"\ndrafter: "sonnet-5"\n'
+                       'summary: "Person 시험 facet 허브"\n---\n\n# Habits\n\n시험 facet.\n', encoding="utf-8")
+        job = it.prompt("claude", self.sid, include_organization=False)
+        made = distillation.create_node({"key": job["key"] + ":habit", "sources": [cited["round_ref"]],
+                                         "hub": "Habits"},
+                                        title=self.sid + " habit", summary="a habit the user stated",
+                                        body="The user keeps a habit they stated.", drafter="gpt-6-astra",
+                                        space="00_Person/Habits")
+        self.assertEqual(made["distillation"]["status"], "complete", made)
+        self.assertFalse(made.get("dangling"), made)
+        done = it.acknowledge("claude", self.sid, job["through"], "preserved", "a Person fact",
+                              [{"key": job["key"] + ":habit"}])
+        self.assertEqual((done["reviewed_rounds"], done["space"]), (2, None))
+        # The same conversation later lands in a scope: its new rounds go there, the Person record stays.
+        self.transcript(claude_round(self.sid, 1) + claude_round(self.sid, 2) + claude_round(self.sid, 3))
+        it.capture("claude", self.sid, str(self.path), key)
+        later = it.cite(f"claude/{self.sid}", quote="question 3", space="00_Scope/Capture")
+        self.assertTrue(later["round_ref"].startswith("00_Scope/Capture/_cited/"), later)
+        self.assertTrue(raw.read_round(cited["round_ref"])["ok"])
+        with self.assertRaisesRegex(ValueError, "cite into that scope"):
+            it.cite(f"claude/{self.sid}", quote="question 2", space="00_Person")
 
 
 if __name__ == "__main__":
