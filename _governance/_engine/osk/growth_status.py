@@ -151,10 +151,12 @@ def _recheck_history(rows: list[dict], since: datetime | None, until: datetime) 
     counts, items = Counter(), []
     for row in window.pop('rows'):
         result, reason = row.get('result'), row.get('reason')
-        if result == 'bound':
+        if reason == rechecks.CARRIED:      # 이어 적은 기록 — 옛 정의의 `updated`를 이은 것도 여기다
+            label = 'carried'
+        elif result == 'bound':
             label = 'baseline' if reason == rechecks.BASELINE else 'binding'
         elif result == 'unchanged':
-            label = 'carried' if reason == rechecks.CARRIED else 'explicit_unchanged'
+            label = 'explicit_unchanged'
         elif result == 'updated':
             label = 'explicit_updated'
         else:
