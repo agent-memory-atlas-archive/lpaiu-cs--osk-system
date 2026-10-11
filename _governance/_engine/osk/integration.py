@@ -27,7 +27,10 @@ UNLANDED = (
     "같은 활동의 다른 이름, 같은 저장소와 그 포크·하위 모듈, 기존 scope의 활동 범위 안의 작업이 든다. "
     "② 없고 고유한 작업 대상(저장소·프로젝트·연구 과제)을 가진, 이어지는 활동이면 그 정본 이름으로 scope를 "
     "새로 연다. ③ 둘 다 아니면 scope를 열지 않는다 — Person에 둘 것만 Person Space에 두고, 그 근거 "
-    f"라운드는 cite_round(space=\"{core.PERSON}\")로 인용한다. ①·②는 cite_round(space=\"{SCOPE}/<이름>\")의 "
+    f"라운드는 cite_round(space=\"{core.PERSON}\")로 인용한다. Person에 쓰기 전에 그 facet의 율령 노드"
+    "(`<facet>-law`)를 먼저 읽고, 활성인 율령이 없으면 쓰지 않는다 — 대화 안에서는 율령 작성을 사용자에게 "
+    "제안하고, 정기 실행은 deferred로 남긴다(시행령 §4 8항). "
+    f"①·②는 cite_round(space=\"{SCOPE}/<이름>\")의 "
     "첫 인용이 이 대화의 착지로 고정한다. 그 scope를 overview로 보고 허브 트리에서 노드의 자리를 정한다.\n")
 
 
@@ -278,9 +281,11 @@ def _scope_cursors(s: dict):
             if candidate != state_path("claude", owner["conversation_id"]):
                 continue
             bound = write.resolve_session(owner["session"]) if owner["session"] else None
-            # 착지 없는 대화는 착지 없는 커서와만 견준다 — 그 사본이 이어받는 것은 원본 턴뿐이다
-            if (owner["space"] or (f"{SCOPE}/{bound}" if bound else None)) == s["space"]:
-                yield owner
+            landing = owner["space"] or (f"{SCOPE}/{bound}" if bound else None)
+            # 착지 없는 대화는 어느 커서와도 견준다 — 이어받는 것은 원본 턴뿐이고, 부모가 착지했으면
+            # 그 착지를 잇는다(`_inherited_rounds`). 착지한 대화는 같은 scope의 커서와만 견준다.
+            if s["space"] is None or landing == s["space"]:
+                yield owner, landing
         except (OSError, ValueError, KeyError):
             continue
 
@@ -341,13 +346,14 @@ def _inherited_rounds(s: dict, rounds: list, dialogue_v1: dict | None = None) ->
         return False
 
     if inherited is None:
-        known = {}
+        known, landings = {}, {}
         if rounds and re.fullmatch(r"[0-9a-fA-F-]{36}", rounds[0]["id"].split(":")[0]):
             # ponytail: one local-state scan on first capture; index native IDs if this grows costly.
-            for owner in _scope_cursors(s):
+            for owner, landing in _scope_cursors(s):
                 for source in owner["rounds"]:
                     if s["space"] or raw.is_native(source["ref"]):   # 저장 라운드는 그 scope의 것이다
                         known.setdefault(source["id"], []).append(source)
+                        landings[source["id"], source["ref"]] = landing
         shared = []
         for pair in rounds:
             candidates = known.get(pair["id"], [])
@@ -358,6 +364,9 @@ def _inherited_rounds(s: dict, rounds: list, dialogue_v1: dict | None = None) ->
                 raise ValueError("copied native round ID has different content; capture remains pending")
             shared.append(source)
         inherited = {"rounds": shared} if shared else None
+        if shared and not s["space"]:
+            # 재개 사본은 같은 대화가 이어진 것이다 — 부모가 고정한 착지를 잇는다
+            s["space"] = next((landings[r["id"], r["ref"]] for r in shared if landings.get((r["id"], r["ref"]))), None)
     if inherited:
         prefix = inherited["rounds"]
         if (len(rounds) < len(prefix)
@@ -630,8 +639,12 @@ def acknowledge(harness: str, conversation_id: str, through: str,
                 if receipt.get("status") != "complete" or not {raw.canonical_ref(ref) for ref in refs} & bound:
                     raise ValueError("target has no complete body/source/hub receipt for this snapshot")
                 target_path = core.resolve_in_root(receipt.get("target", {}).get("path", ""))
-                # Person은 헌법 제9조 4항의 자리다 — 소속 scope 없는 세션은 그것만 남긴다(시행령 §3 9항)
-                if target_path is None or raw.graph.space_of(target_path)[0] not in ("scope", "person"):
+                # Person 대상은 소속 scope 없는 세션이 Person에 둔 것뿐이다(시행령 §3 9항) — 그 근거 라운드는
+                # Person Space의 인용 기록에 있다(§2 8항)
+                kind = raw.graph.space_of(target_path)[0] if target_path is not None else None
+                if kind == "person" and not any(raw.is_person_record(src.get("path")) for src in sources):
+                    raise ValueError("a Person target cites rounds kept in Person Space (Bylaws §2 8)")
+                if kind not in ("scope", "person"):
                     raise ValueError("preserved integration target must be a durable Scope or Person node")
                 receipts.append(receipt)
         elif outcome == "summary":
@@ -821,7 +834,7 @@ def _copied_since(s: dict, native_path: str) -> str | None:
         return None   # 복제는 원래 행 id(UUID)로만 알아본다 — _inherited_rounds와 같은 기준
     order = {r["id"]: i for i, r in enumerate(rounds)}
     best = None
-    for owner in _scope_cursors(s):
+    for owner, _landing in _scope_cursors(s):
         tracked = (owner.get("inherited") or {}).get("rounds", []) + owner["rounds"]
         bound = owner["turns_since"] if "turns_since" in owner else (tracked[-1]["id"] if tracked else None)
         if bound in order and (best is None or order[bound] > order[best]):
@@ -961,8 +974,9 @@ def catchup(limit: int = 20, *, max_rounds: int = MAX_REVIEW_ROUNDS, tried=None)
         try:
             result = capture(s["harness"], s["conversation_id"],
                              s.get("capture_path") or s["transcript_path"], s["session"], s.get("space"))
-            captures.append({k: result.get(k) for k in (
-                "harness", "conversation_id", "ok", "appended", "capture_error", "capture_recovery")})
+            if result.get("appended") or not result.get("ok"):   # 실행 기록에는 바뀐 것만 남긴다
+                captures.append({k: result.get(k) for k in (
+                    "harness", "conversation_id", "ok", "appended", "capture_error", "capture_recovery")})
         except Exception as exc:
             errors.append({"harness": s["harness"], "conversation_id": s["conversation_id"], "error": str(exc)})
     states, _, again, _ = _known_pending(None, tried)
@@ -1254,6 +1268,12 @@ def _cite(p: Path, s: dict, harness: str, sid: str, quote, turn, note, session, 
     one_off = _one_off(s)
     bound = None if one_off else write.resolve_session(session)
     landed = s["space"] or (f"{SCOPE}/{bound}" if bound else None)
+    if not landed:
+        # 기록을 쓰고 착지를 고정하기 전에 끊긴 인용 — 그 대화의 기록이 있는 scope가 착지다
+        found = next((sc for sc in raw._scope_names() if raw.record_path(sc, s["record"]).exists()), None)
+        if found:
+            landed = s["space"] = f"{SCOPE}/{found}"
+            _save(p, s)
     if raw.is_person(space) and landed:
         raise ValueError(f"this conversation belongs to {landed}; cite into that scope, not Person Space")
     if (space and not raw.is_person(space) and landed
@@ -1312,7 +1332,11 @@ def _cite(p: Path, s: dict, harness: str, sid: str, quote, turn, note, session, 
         # A fork parent's turn keeps its owner: the citation names the parent and joins
         # the parent's record, so the parent citing the same turn reuses that round.
         with _locked(harness, owner) as pp:
-            record = _load(pp, harness, owner)["record"]
+            parent = _load(pp, harness, owner)
+        record = parent["record"]
+        if raw.is_person(space) and (parent["space"] or not _one_off(parent) and parent["session"]
+                                     and write.resolve_session(parent["session"])):
+            raise ValueError("the fork parent belongs to a scope; cite its turn there, not in Person Space")
     result = raw.append_rounds(session, record, [{"user": words, "agent": (note or "").strip()}],
                                space or s["space"], cited=meta, bind=not one_off)
     if not landed and not raw.is_person(space):

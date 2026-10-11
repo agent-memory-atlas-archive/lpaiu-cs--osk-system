@@ -37,12 +37,13 @@ RULES = (
 
 
 def rules() -> list[dict]:
-    """이 기기의 OS에 맞는 엔진 규칙과 대장 규칙. 대장을 읽지 못하면 엔진 규칙만 쓴다."""
+    """이 기기의 OS에 맞는 규칙. 대장의 규칙(나중 것부터)이 엔진 규칙보다 먼저다 — 같은 뿌리를 다시
+    확인해 더한 규칙이 앞선다. 대장을 읽지 못하면 엔진 규칙만 쓴다."""
     try:
         extra = [r for r in core.ledger_read(LEDGER) if r.get("kind") == "rule"]
     except (OSError, ValueError):
         extra = []
-    return [r for r in (*RULES, *extra) if r.get("os") in (None, os.name)]
+    return [r for r in (*reversed(extra), *RULES) if r.get("os") in (None, os.name)]
 
 
 def _root(rule: dict) -> Path | None:
@@ -50,14 +51,22 @@ def _root(rule: dict) -> Path | None:
     if not text or "%" in text or "$" in text:     # 정의되지 않은 환경 변수
         return None
     try:
-        return Path(text).resolve()
+        root = Path(text).resolve()
     except OSError:
         return None
+    # 드라이브·파일시스템 뿌리나 홈 폴더 자체는 일회성 작업 공간의 뿌리가 아니다 — 모든 폴더가 걸린다
+    return None if root == root.parent or root == Path.home().resolve() else root
+
+
+def _line(version) -> tuple:
+    """판본의 주·부 번호. 고침 번호만 다른 판은 같은 판본으로 본다 — 작업 공간의 모양은 기능 판에서 바뀐다."""
+    return tuple(int(n) for n in re.findall(r"\d+", str(version or ""))[:2])
 
 
 def judge(harness: str, cwd: str | None, version: str | None = None) -> dict | None:
     """작업 폴더가 어느 규칙의 뿌리 아래면 그 판정, 아니면 None. 뿌리 아래에서 규칙에 없는 모양이나
-    규칙을 확인한 판본과 다른 하네스 판본은 일회성으로 둔 채 `warning`으로 알린다."""
+    규칙을 확인한 판본과 주·부 번호가 다른 하네스 판본은 일회성으로 둔 채 `warning`으로 알린다.
+    동기화된 규칙이 깨졌으면 그 규칙만 건너뛴다."""
     if not cwd:
         return None
     try:
@@ -65,22 +74,23 @@ def judge(harness: str, cwd: str | None, version: str | None = None) -> dict | N
     except OSError:
         return None
     for rule in rules():
-        root = _root(rule)
         try:
+            root = _root(rule)
             rel = path.relative_to(root) if root else None
-        except ValueError:
-            rel = None
+            fits = bool(rel and rel.parts) and re.match(rf"(?:{rule['shape']})(?:/|$)", rel.as_posix())
+            name, confirmed = str(rule["harness"]), rule.get("version")
+        except (ValueError, KeyError, TypeError, re.error):
+            continue
         if rel is None or not rel.parts:
             continue
         if any((p / ".git").exists() for p in [path, *path.parents][:len(rel.parts)]):
             return None             # Git 저장소의 키는 저장소 동일성으로 구별된다
-        out = {"one_off": True, "harness": rule["harness"], "root": rule["root"],
-               "cwd": str(path), "version": version}
-        if not re.match(rf"(?:{rule['shape']})(?:/|$)", rel.as_posix()):
+        out = {"one_off": True, "harness": name, "root": rule["root"], "cwd": str(path), "version": version}
+        if not fits:
             out["warning"] = (f"`{rule['root']}` 아래의 규칙에 없는 모양({rel.as_posix()})이다 — 결속하지 "
                               "않았다. 일회성 작업 공간의 규칙을 다시 확인한다(SETUP의 일회성 작업 공간)")
-        elif version and harness == rule["harness"] and version != rule.get("version"):
-            out["warning"] = (f"{harness} {version}은 규칙을 확인한 판본({rule.get('version')})과 다르다 — "
+        elif version and harness == name and _line(version) != _line(confirmed):
+            out["warning"] = (f"{harness} {version}은 규칙을 확인한 판본({confirmed})과 다르다 — "
                               "일회성 작업 공간의 규칙을 다시 확인한다(SETUP의 일회성 작업 공간)")
         return out
     return None

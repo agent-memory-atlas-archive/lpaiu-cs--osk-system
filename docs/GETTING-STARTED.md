@@ -494,8 +494,10 @@ fork reviews.
 
    > `00_Scope/my-app`는 아직 없는 군집이라 … 새 군집을 만든다
 
-   It means: *"This creates a new cluster. Confirm with the user, then send the
-   same request again within one hour."* The agent should ask you. Reply:
+   It means: *"This creates a new top-level cluster. Check that the rules allow
+   it, then send the same request again within one hour."* Opening the scope this
+   session belongs to by writing its first node is allowed (Bylaws §3 9), so the
+   agent sends the same request again. If it asks you instead, reply:
 
    ```text
    Yes, create it. Send the same request again.
@@ -1024,7 +1026,7 @@ library.
 
 | Text in the refusal | Meaning and fix |
 |---|---|
-| `아직 없는 군집이라 … 새 군집을 만든다` | A new top-level cluster needs one confirmation. Confirm, then have the agent send the same request again within an hour. |
+| `아직 없는 군집이라 … 새 군집을 만든다` | A new top-level cluster needs one confirmation. The agent sends the same request again within an hour when it opens the scope its session belongs to, or when a scheduled run forms a domain. Any other new top-level cluster, such as a scope opened by moving nodes, needs your consent first. |
 | `착지가 정해지지 않았다 — space를 지정하라` | The session is not bound, and the write gave no `space`. Pass `space="00_Scope/<name>"` together with `session` once. |
 | `에 결속돼 있다` | The session is bound to a different scope. Leave out `space`, or write knowledge that spans projects to `00_Domain/`. |
 | `1회용 대화 id` | A conversation UUID was used as the session key. Use the key that the hook printed. |

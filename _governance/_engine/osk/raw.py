@@ -98,8 +98,17 @@ def record_path(scope: str, record: str) -> Path:
 
 
 def is_person(space: str | None) -> bool:
-    """Person Space의 인용 기록 자리를 가리키는 착지인가(`"00_Person"`)."""
-    return (space or "").strip().strip("/") == PERSON
+    """Person Space의 인용 기록 자리를 가리키는 착지인가(`"00_Person"`). 옛 루트 이름(`= Person`·
+    `Person`)으로 적어도 이 vault의 Person 루트로 읽는다."""
+    from .core import SPACE_ROOTS
+    from .layout import adapt_path
+    name = (space or "").strip().strip("/")
+    return bool(name) and "/" not in name and adapt_path(name, SPACE_ROOTS) == PERSON
+
+
+def is_person_record(path: str | None) -> bool:
+    """Person Space의 인용 기록 구획(`00_Person/_cited/`) 안의 기록인가."""
+    return bool(path) and graph.space_of(ROOT / str(path)) == ("raw", PERSON)
 
 
 def person_record_path(record: str) -> Path:
@@ -561,15 +570,18 @@ def read_round(ref: str, max_chars: int = 20000, view: str = "full",
 
 
 def list_records(space: str) -> dict:
-    """한 scope의 세션 기록 목록 — 좌표를 모를 때 여기서 시작한다."""
-    scope = _scope_of_space(space)
-    if not scope or scope not in _scope_names():
-        raise write.WriteError(
-            "없는 scope", [f"`{space}`는 scope가 아니다. 가능한 space: "
-                          f"{_space_list()}"])
+    """한 scope(또는 Person Space)의 세션 기록 목록 — 좌표를 모를 때 여기서 시작한다."""
+    if is_person(space):
+        scope, dirs = PERSON, [ROOT / PERSON / CITED]
+    else:
+        scope = _scope_of_space(space)
+        if not scope or scope not in _scope_names():
+            raise write.WriteError(
+                "없는 scope", [f"`{space}`는 scope가 아니다. 가능한 space: "
+                              f"{_space_list()}"])
+        dirs = [ROOT / SCOPE / scope / name for name in graph.RECORD_DIRS]
     out = []
-    files = sorted({f for name in graph.RECORD_DIRS
-                    for d in (ROOT / SCOPE / scope / name,)
+    files = sorted({f for d in dirs
                     for f in (*d.glob("*.md"), *(d / ".records").glob("*.txt"),
                               *(d / ".records").glob("*/record.txt"))})
     for candidate in files:

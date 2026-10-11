@@ -241,7 +241,8 @@ def _memory_block(scope_memory, key: str, st: dict | None = None) -> str:
         f"hash: {st['hash']}\n---\n{text}")
 
 
-def _bootstrap(key: str, *, bound: bool, ident: tuple | None = None, workspace: dict | None = None) -> str:
+def _bootstrap(key: str, *, bound: bool, ident: tuple | None = None, workspace: dict | None = None,
+               landing: str | None = None) -> str:
     arg = json.dumps(key, ensure_ascii=False)
     workspace = workspace or {}
     # `cite_round(conversation=…)` names this conversation by the pair below.
@@ -257,6 +258,8 @@ def _bootstrap(key: str, *, bound: bool, ident: tuple | None = None, workspace: 
             + (" 이 작업 폴더는 일회성 작업 공간이라 세션 키를 결속하지 않고 그 키에 선 결속도 따르지 "
                "않는다(Mechanism §6-2 6항) — 쓰기 도구에 session을 주지 말고, 노드나 인용을 쓸 때 space를 "
                "명시한다. 그 착지는 이 대화에만 적용된다." if workspace.get("one_off") else "")
+            + (f" 이 대화는 `{landing}`에 착지해 있다 — 쓸 때 space에 그 경로를 준다."
+               if landing and not bound else "")
             + (f" 작업 공간 판별: {workspace['warning']}" if workspace.get("warning") else ""))
 
 
@@ -495,10 +498,11 @@ def main() -> None:
         scope = write.resolve_session(key)
         try:
             from osk import integration
-            workspace = integration.status(*ident)["workspace"] if ident else None
+            seen = integration.status(*ident) if ident else {}
         except Exception:
-            workspace = None    # 판별을 못 읽어도 시작 안내는 싣는다
-        bootstrap = Block("bootstrap", _bootstrap(key, bound=bool(scope), ident=ident, workspace=workspace))
+            seen = {}           # 판별을 못 읽어도 시작 안내는 싣는다
+        bootstrap = Block("bootstrap", _bootstrap(key, bound=bool(scope), ident=ident, workspace=seen.get("workspace"),
+                                                  landing=seen.get("space")))
         try:
             recovery = _recovery(scope_memory, key)
         except Exception:

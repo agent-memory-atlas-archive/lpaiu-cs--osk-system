@@ -2347,8 +2347,47 @@ print(json.dumps({'record': st['record'], 'refs': st['pending_refs'], 'appended'
         self.assertTrue(odd["workspace"]["one_off"])
         self.assertIn("규칙에 없는 모양", odd["workspace"]["warning"])
         self.assertIn("판본", talk(self.sid + "-newer", f"2026-10-13/{key}", "9.9.9")["workspace"]["warning"])
+        self.assertNotIn("warning", talk(self.sid + "-patch", f"2026-10-13/{key}-p", "2.1.295")["workspace"])
+        workspaces.add("claude", str(root), r"\d{4}-\d{2}-\d{2}/[^/]+", "9.9.0", "re-checked")
+        self.assertNotIn("warning", talk(self.sid + "-rechecked", f"2026-10-13/{key}-r", "9.9.9")["workspace"])
         (root / "2026-10-14" / "repo" / ".git").mkdir(parents=True)
         self.assertFalse(talk(self.sid + "-repo", "2026-10-14/repo")["workspace"]["one_off"])
+
+    def test_a_resumed_copy_of_a_landed_one_off_conversation_keeps_its_landing(self):
+        # A copy of a conversation landed only by its first citation starts unlanded. The parent's
+        # turns stay the parent's, and the copy continues in the parent's landing (#184 review).
+        from osk import workspaces
+        root = Path(TMP.name) / f"{self.sid}-root"
+        core.ledger_append(workspaces.LEDGER, {"kind": "rule", "harness": "claude", "version": "2.1.281",
+                                               "root": str(root), "shape": r"[a-z]+-[a-z]+"})
+        self.addCleanup(workspaces.LEDGER.unlink, missing_ok=True)
+        cwd = root / "silver-gravity"
+        cwd.mkdir(parents=True)
+        parent = self.sid + "-parent"
+        self.forget(parent, self.sid)
+        rows = [{**r, "cwd": str(cwd)} for r in claude_round(parent, 1)]
+        rows[0]["uuid"] = str(uuid.uuid4())
+        self.transcript(rows)
+        self.assertTrue(it.capture("claude", parent, str(self.path), "silver-gravity")["workspace"]["one_off"])
+        it.cite(f"claude/{parent}", quote="question 1", space="00_Scope/W1")
+        self.transcript([dict(r, sessionId=self.sid) for r in rows]
+                        + [{**r, "cwd": str(cwd)} for r in claude_round(self.sid, 2)])
+        copied = it.capture("claude", self.sid, str(self.path), "silver-gravity")
+        self.assertTrue(copied["ok"], copied)
+        self.assertEqual((copied["inherited_rounds"], copied["captured_rounds"], copied["space"]),
+                         (1, 1, "00_Scope/W1"), copied)
+
+    def test_a_citation_cut_before_its_pin_lands_where_its_record_is(self):
+        key = self.sid + "-key"
+        self.forget(self.sid)
+        self.transcript(claude_round(self.sid, 1) + claude_round(self.sid, 2))
+        st = it.capture("claude", self.sid, str(self.path), key)
+        # the record was written, then the process stopped before the landing was pinned
+        raw.append_rounds(key, st["record"], [{"user": "question 1", "agent": ""}], "00_Scope/Capture",
+                          cited={"harness": "claude", "conversation": self.sid, "turn": "user-1"}, bind=False)
+        with self.assertRaisesRegex(ValueError, "already landed"):
+            it.cite(f"claude/{self.sid}", quote="question 2", space="00_Scope/W1")
+        self.assertEqual(it.status("claude", self.sid)["space"], "00_Scope/Capture")
 
     def test_concurrent_first_citations_land_the_conversation_once(self):
         # The landing check, the write and the pin are one step under the conversation's lock:
@@ -2427,6 +2466,17 @@ print(json.dumps({'record': st['record'], 'refs': st['pending_refs'], 'appended'
         self.assertTrue(raw.read_round(cited["round_ref"])["ok"])
         with self.assertRaisesRegex(ValueError, "cite into that scope"):
             it.cite(f"claude/{self.sid}", quote="question 2", space="00_Person")
+        # A Person node is distilled only from rounds kept in Person Space (Bylaws §2 8).
+        with self.assertRaisesRegex(write.WriteError, "rounds kept in Person Space"):
+            distillation.create_node({"key": job["key"] + ":scope-habit", "sources": [later["round_ref"]],
+                                      "hub": "Habits"},
+                                     title=self.sid + " scope habit", summary="from a scope round",
+                                     body="Not a Person-only round.", drafter="gpt-6-astra",
+                                     space="00_Person/Habits")
+        self.assertTrue(raw.is_person("00_Person") and raw.is_person("Person") and raw.is_person("= Person"))
+        self.assertFalse(raw.is_person("00_Person/Habits"))
+        listed = [r["path"] for r in raw.list_records("00_Person")["records"]]
+        self.assertIn(cited["path"], listed)
 
 
 if __name__ == "__main__":
