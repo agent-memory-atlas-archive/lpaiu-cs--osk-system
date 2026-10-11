@@ -184,7 +184,7 @@ release tag rather than `main` (newer tags are on the
 [releases page](https://github.com/lpaiu-cs/osk-system/releases)):
 
 ```bash
-git clone --branch v5.0.0 https://github.com/lpaiu-cs/osk-system.git my-osk-vault
+git clone --branch v5.1.0 https://github.com/lpaiu-cs/osk-system.git my-osk-vault
 cd my-osk-vault
 git switch -c main
 python _governance/_engine/scripts/setup.py --interactive
@@ -356,9 +356,11 @@ for your own instance. Personal data belongs in that instance, not in this publi
 repository.
 
 The [v5.0.0 growth milestones](docs/v5.0-milestones.md) (Korean) describe the development
-sequence and acceptance criteria. The plans for the next releases are in
-[v5.1.0](docs/v5.1-milestones.md) and [v5.2.0](docs/v5.2-milestones.md), which harden what v5.0.0
-builds, and in [v6.0.0](docs/v6.0-milestones.md), which extends the memory model.
+sequence and acceptance criteria. v5.1.0 tracks conversations that have no scope yet and lets their review decide where
+they belong. The plans for the next releases are in [v5.2.0](docs/v5.2-milestones.md), with the
+meaning-quality evaluation and deferred designs moved from [the v5.1.0 plan](docs/v5.1-milestones.md),
+which harden what v5.0.0 builds, and in [v6.0.0](docs/v6.0-milestones.md), which extends the
+memory model.
 
 ## License
 
