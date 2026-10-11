@@ -482,7 +482,8 @@ def prompt(planned: dict | None = None, limit: int = 3) -> str:
         "Do not run the osk CLI or "
         "shell commands for osk work: a sandboxed runner cannot execute them, and every attempt "
         "spends the time budget. Record each decision in the final packet below; the runner "
-        "applies it after you finish. For scope_jobs use each job's original session, "
+        "applies it after you finish. For scope_jobs use each job's original session (none for a job "
+        "whose prompt marks a one-off workspace), "
         "pending_refs and exact through snapshot; an empty shared memory or a short conversation "
         "is not a reason to omit that review. Keep unrelated source conversations distinct. "
         "Review only the selected Domain candidates and organization_jobs at their work_order positions. "
@@ -1176,7 +1177,9 @@ def run(command: list[str], limit: int = 3, timeout: int = 600, *,
                 planned["engine_rev"] = core.epoch.loaded()
                 if scope_job is not None and scope_job.get("session"):
                     from . import write
-                    scope = write.resolve_session(scope_job["session"])
+                    # 일회성 작업 공간의 대화는 그 키의 결속을 따르지 않는다(Mechanism §6-2 6항)
+                    scope = (None if (scope_job.get("workspace") or {}).get("one_off")
+                             else write.resolve_session(scope_job["session"]))
                     planned["work_context"] = "stop:" + (scope or scope_job["session"])
                     planned["organization_jobs"] = organization.pending([scope], limit=1) if scope else []
                     # 정기 실행이 없으면 이 scope의 재검토를 fork가 맡는다.

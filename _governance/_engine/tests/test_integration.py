@@ -2318,27 +2318,79 @@ print(json.dumps({'record': st['record'], 'refs': st['pending_refs'], 'appended'
             self.forget(sid)
             return it.capture("claude", sid, str(path), key)
 
-        write.bind_session(key, "Capture", "a binding made before the rule")
+        # The key also names an ordinary scope elsewhere: a binding made before the rule, or a
+        # repository folder of the same name. The one-off conversation does not follow it.
+        write.bind_session(key, "Capture", "a binding of the same name")
         st = talk(self.sid, f"2026-10-11/{key}")
         self.assertTrue(st["ok"], st)
         self.assertEqual((st["workspace"]["one_off"], st["space"]), (True, None))
         self.assertNotIn("warning", st["workspace"])
-        self.assertIsNone(write.resolve_session(key))            # the earlier binding is not followed
         rows = len(core.ledger_read(core.ROUTING))
-        cited = it.cite(f"claude/{self.sid}", quote="question 1", space="00_Scope/Capture")
-        self.assertEqual(cited["binding"]["state"], "not_bound", cited)
-        self.assertEqual(len(core.ledger_read(core.ROUTING)), rows)
-        self.assertEqual(it.status("claude", self.sid)["space"], "00_Scope/Capture")
-        # another conversation in a folder of the same name is its own
+        cited = it.cite(f"claude/{self.sid}", quote="question 1", space="00_Scope/W1")
+        self.assertTrue(cited["round_ref"].startswith("00_Scope/W1/_cited/"), cited)
+        self.assertNotIn("binding", cited)
+        self.assertEqual(len(core.ledger_read(core.ROUTING)), rows)          # nothing bound
+        self.assertEqual(it.status("claude", self.sid)["space"], "00_Scope/W1")
+        self.assertEqual(it.capture("claude", self.sid, None, key)["space"], "00_Scope/W1")
+        # The judgment belongs to the conversation, not to the key: elsewhere the key keeps its scope.
+        self.assertEqual(write.resolve_session(key), "Capture")
         self.assertIsNone(talk(self.sid + "-other", f"2026-10-12/{key}")["space"])
+        # A write tool takes only a key; a process standing in the one-off folder does not bind it.
+        self.addCleanup(setattr, workspaces, "_here", None)
+        workspaces.enter(str(root / f"2026-10-11/{key}"))
+        self.assertIsNone(write.resolve_session(key))
         with self.assertRaisesRegex(write.WriteError, "일회성 작업 공간"):
             write.create_node(self.sid + " node", "summary", "body", "gpt-6-astra", session=key)
+        workspaces.enter(str(TMP.name))
+        self.assertEqual(write.resolve_session(key), "Capture")
         odd = talk(self.sid + "-odd", "artifacts/x")
         self.assertTrue(odd["workspace"]["one_off"])
         self.assertIn("규칙에 없는 모양", odd["workspace"]["warning"])
         self.assertIn("판본", talk(self.sid + "-newer", f"2026-10-13/{key}", "9.9.9")["workspace"]["warning"])
         (root / "2026-10-14" / "repo" / ".git").mkdir(parents=True)
         self.assertFalse(talk(self.sid + "-repo", "2026-10-14/repo")["workspace"]["one_off"])
+
+    def test_concurrent_first_citations_land_the_conversation_once(self):
+        # The landing check, the write and the pin are one step under the conversation's lock:
+        # two first citations into different scopes cannot both land. A one-off workspace has no
+        # binding to stop the second one, so only that step does.
+        import threading
+        from osk import workspaces
+        root = Path(TMP.name) / f"{self.sid}-root"
+        core.ledger_append(workspaces.LEDGER, {"kind": "rule", "harness": "claude", "version": "2.1.281",
+                                               "root": str(root), "shape": r"[a-z]+-[a-z]+"})
+        self.addCleanup(workspaces.LEDGER.unlink, missing_ok=True)
+        (root / "fusion-orion").mkdir(parents=True)
+        key = "fusion-orion"
+        self.forget(self.sid)
+        self.transcript([{**r, "cwd": str(root / "fusion-orion")}
+                         for r in claude_round(self.sid, 1) + claude_round(self.sid, 2)])
+        self.assertTrue(it.capture("claude", self.sid, str(self.path), key)["workspace"]["one_off"])
+        original, inside, outcomes = raw.append_rounds, threading.Event(), {}
+
+        def slow(*args, **kwargs):
+            inside.set()
+            time.sleep(0.5)             # the other citation tries to land meanwhile
+            return original(*args, **kwargs)
+
+        def cite(name, space, quote):
+            try:
+                outcomes[name] = it.cite(f"claude/{self.sid}", quote=quote, space=space)
+            except ValueError as exc:
+                outcomes[name] = exc
+
+        with mock.patch.object(raw, "append_rounds", slow):
+            first = threading.Thread(target=cite, args=("first", "00_Scope/Capture", "question 1"))
+            first.start()
+            self.assertTrue(inside.wait(10))
+            second = threading.Thread(target=cite, args=("second", "00_Scope/W1", "question 2"))
+            second.start()
+            first.join(30)
+            second.join(30)
+        self.assertTrue(outcomes["first"]["round_ref"].startswith("00_Scope/Capture/_cited/"), outcomes)
+        self.assertIsInstance(outcomes["second"], ValueError, outcomes)
+        self.assertIn("already landed", str(outcomes["second"]))
+        self.assertFalse(any((ROOT / "00_Scope/W1/_cited").glob(f".records/{it.status('claude', self.sid)['record']}*")))
 
     def test_a_person_only_conversation_cites_and_distills_into_person_space(self):
         from osk import distillation

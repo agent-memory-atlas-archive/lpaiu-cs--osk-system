@@ -187,6 +187,11 @@ def session_key(cwd: str) -> str:
     이름만으로는 무관한 두 저장소가 한 키를 나눠 가지므로, Git 저장소는 결속의
     소유자와 뿌리가 다르면 파생 키를 받는다(`write.repo_session`)."""
     name, repo = _checkout(cwd)
+    try:
+        from osk import workspaces
+        workspaces.enter(cwd)        # 이 프로세스의 결속 판정이 그 작업 폴더를 알게 한다(Mechanism §6-2 6항)
+    except Exception:
+        pass
     if not repo:
         return name
     try:
@@ -250,8 +255,8 @@ def _bootstrap(key: str, *, bound: bool, ident: tuple | None = None, workspace: 
                if bound else "아직 scope 결속이 없다. 착지를 추측하지 말고 overview의 "
                "군집에서 해당 프로젝트를 확인한 뒤 scope_memory를 읽어라.")
             + (" 이 작업 폴더는 일회성 작업 공간이라 세션 키를 결속하지 않고 그 키에 선 결속도 따르지 "
-               "않는다(Mechanism §6-2 6항) — 노드나 인용을 쓸 때 space를 명시하고, 그 착지는 이 대화에만 "
-               "적용된다." if workspace.get("one_off") else "")
+               "않는다(Mechanism §6-2 6항) — 쓰기 도구에 session을 주지 말고, 노드나 인용을 쓸 때 space를 "
+               "명시한다. 그 착지는 이 대화에만 적용된다." if workspace.get("one_off") else "")
             + (f" 작업 공간 판별: {workspace['warning']}" if workspace.get("warning") else ""))
 
 

@@ -5,9 +5,10 @@
 `_ledger/workspaces.jsonl`의 규칙(`kind: "rule"`)이 같은 형식이다. Git 저장소는 판별하지
 않는다 — 그 키는 저장소 동일성으로 구별된다.
 
-일회성 작업 공간의 세션 키는 결속하지 않고 그 키에 선 결속도 따르지 않는다. 쓰기 도구는 세션
-키만 받으므로, 포착이 판별한 키를 이 기기의 목록에 남겨(`remember`) 결속 판정
-(`write.resolve_session`·`write.bind_after_write`)이 같은 판정을 따르게 한다.
+일회성 작업 공간의 세션 키는 결속하지 않고 그 키에 선 결속도 따르지 않는다. 판별은 대화에 묶는다 —
+포착이 그 대화의 작업 폴더로 한 번 판별해 커서에 고정하고, 포착·인용·검토가 그것을 쓴다. 세션 키만
+받는 쓰기 도구는 그 프로세스가 선 작업 폴더로 판정한다(`enter`·`is_one_off`). 같은 이름의 정상
+저장소 키는 다른 프로세스의 일이라 영향을 받지 않는다.
 """
 from __future__ import annotations
 
@@ -97,23 +98,23 @@ def add(harness: str, root: str, shape: str, version: str, note: str = "") -> di
                                            "note": note})
 
 
-def _keys() -> Path:
-    return core.local_lock_path("osk-one-off-keys.txt").with_suffix(".txt")
+_here: tuple[str, dict | None] | None = None     # (이 프로세스가 선 작업 폴더의 키, 판별)
 
 
-def remember(key: str | None) -> None:
-    """이 기기에서 일회성 작업 공간으로 판별한 세션 키를 남긴다 — 한 줄에 하나, 덧붙이기만 한다."""
-    key = (key or "").strip()
-    if key and not is_one_off(key):
-        path = _keys()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(key + "\n")
+def enter(cwd: str | None) -> dict | None:
+    """이 프로세스가 선 작업 폴더를 판별해 둔다 — 훅은 그 대화의 작업 폴더로 부른다. 부르지 않은
+    프로세스(MCP 서버 등)는 처음 물을 때 자기 작업 폴더로 정한다."""
+    global _here
+    found = judge("", cwd) if cwd else None
+    _here = (Path(cwd).name if cwd else "", found)
+    return found
 
 
 def is_one_off(key: str | None) -> bool:
+    """`key`가 이 프로세스가 선 일회성 작업 공간의 키인가. 키 문자열만으로 정하지 않는다 — 같은
+    이름의 저장소 키가 다른 세션에 따로 있을 수 있다. 대화를 아는 자리(포착·인용·검토)는 그 대화에
+    고정한 판별을 쓴다(`integration`)."""
+    if _here is None:
+        enter(os.getcwd())
     key = (key or "").strip()
-    try:
-        return bool(key) and key in _keys().read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return False
+    return bool(key) and key == _here[0] and bool((_here[1] or {}).get("one_off"))

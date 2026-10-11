@@ -381,18 +381,21 @@ def _locate_transcript(harness: str, sid: str, saved: str | None = None) -> str 
     return str(matches[0]) if matches else saved
 
 
-def _workspace(s: dict, session: str, path: str | None, cwd: str | None) -> None:
+def _workspace(s: dict, path: str | None, cwd: str | None) -> bool:
     """이 대화의 작업 폴더가 일회성 작업 공간인가(Mechanism §6-2 6항) — 처음 알 수 있을 때 한 번
     판별해 대화에 고정한다. 원본 전사가 적은 작업 폴더를 먼저 쓰고, 없으면 훅의 작업 폴더를 쓴다.
-    일회성이면 그 세션 키를 이 기기의 목록에 남겨 결속 판정이 따르게 한다 — 착지를 고르기 전이다."""
+    판별은 그 대화의 것이다 — 같은 이름의 키를 쓰는 다른 세션에 번지지 않는다."""
     if "workspace" not in s:
         seen = transcripts.workspace(path, s["harness"]) if path and Path(path).is_file() else None
         where = (seen or {}).get("cwd") or cwd
         if where:
             s["workspace"] = (workspaces.judge(s["harness"], where, (seen or {}).get("version"))
                               or {"one_off": False})
-    if (s.get("workspace") or {}).get("one_off"):
-        workspaces.remember(session)
+    return _one_off(s)
+
+
+def _one_off(s: dict) -> bool:
+    return bool((s.get("workspace") or {}).get("one_off"))
 
 
 def capture(harness: str, conversation_id: str, transcript_path: str | None,
@@ -409,8 +412,9 @@ def capture(harness: str, conversation_id: str, transcript_path: str | None,
         _save(p, s)  # Persist intent before reading; failures remain pending.
         phase = "landing"
         try:
-            _workspace(s, session, (str(Path(transcript_path).resolve()) if transcript_path else None)
-                       or s.get("capture_path") or s["transcript_path"], cwd)
+            # 일회성 작업 공간의 대화는 그 키에 선 결속을 따르지 않는다 — 착지는 대화에 고정한 것뿐이다
+            follow = not _workspace(s, (str(Path(transcript_path).resolve()) if transcript_path else None)
+                                    or s.get("capture_path") or s["transcript_path"], cwd)
             pinned = s["space"]
             stored = next((r["ref"] for r in s["rounds"] if not raw.is_native(r["ref"])), None)
             if not pinned and stored:
@@ -421,13 +425,13 @@ def capture(harness: str, conversation_id: str, transcript_path: str | None,
                 if not scope:
                     raise ValueError("saved conversation scope is invalid; capture remains pending")
                 pinned = (SCOPE + '/') + scope
-            destination, bound = write.resolve_landing(session, space, raw._CONFINE)
+            destination, bound = write.resolve_landing(session if follow else None, space, raw._CONFINE)
             requested = (SCOPE + '/') + destination if destination else None
             if pinned and not requested and s["session"]:
                 # A generic cwd key must not bind unrelated conversations.
                 # Resume this native ID using its explicitly chosen session.
                 session = s["session"]
-                destination, bound = write.resolve_landing(session, pinned, raw._CONFINE)
+                destination, bound = write.resolve_landing(session if follow else None, pinned, raw._CONFINE)
                 requested = (SCOPE + '/') + destination
             if (pinned and requested and pinned != requested
                     or s["session"] and s["session"] != session
@@ -631,7 +635,8 @@ def acknowledge(harness: str, conversation_id: str, through: str,
                     raise ValueError("preserved integration target must be a durable Scope or Person node")
                 receipts.append(receipt)
         elif outcome == "summary":
-            memory = scope_memory.read(s["session"])
+            # 일회성 작업 공간의 대화는 그 키의 결속이 아니라 대화에 고정한 착지의 기억을 본다
+            memory = scope_memory.read(None, s["space"]) if _one_off(s) else scope_memory.read(s["session"])
             if not isinstance(targets, list) or not targets or not all(
                     isinstance(t, dict) and isinstance(t.get("text"), str) and t["text"].strip()
                     and t["text"] in memory["text"] for t in targets):
@@ -1102,7 +1107,7 @@ def prompt(harness: str, conversation_id: str, *, include_organization: bool = T
     from . import organization
     jobs = []
     try:
-        scope = write.resolve_session(st["session"]) if st.get("session") else None
+        scope = write.resolve_session(st["session"]) if st.get("session") and not _one_off(s) else None
     except (OSError, ValueError, write.WriteError):
         scope = None
     try:
@@ -1150,7 +1155,7 @@ def prompt(harness: str, conversation_id: str, *, include_organization: bool = T
         text += f"작업 공간 판별: {workspace['warning']}\n"
     if workspace.get("one_off"):
         text += ("이 대화의 작업 폴더는 일회성 작업 공간이라 세션 키를 결속하지 않는다(Mechanism §6-2 6항) — "
-                 "노드를 쓸 때마다 space를 준다.\n")
+                 "쓰기 도구에 session을 주지 말고, 노드를 쓸 때마다 space를 준다.\n")
     text += "search로 기존 노드를 찾는다. " + write.CLAIM_GUIDANCE + "오래 쓸 지식만 Scope 노드로 옮긴다. "
     # 세션이 아직 결속되지 않았으면(첫 노드 쓰기 전) 이 대화가 착지한 scope로 본다
     tree_scope = scope or (raw._scope_of_space(s["space"]) if s.get("space") else None)
@@ -1233,14 +1238,21 @@ def cite(conversation: str, quote: str | None = None, turn: str | int | None = N
     copies the user's words from the harness transcript and keeps the agent's reply as
     location and hash; the caller names the turn and never resends its text."""
     harness, sid = _conversation(conversation)
+    # 착지 확인·기록·고정을 이 대화의 잠금 하나 안에서 한다 — 같은 대화의 첫 인용 둘이 서로 다른
+    # scope로 갈리지 않는다. 잠금 순서는 검토 ACK와 같다(대화 잠금 → 변경 잠금).
     with _locked(harness, sid) as p:
-        s = _load(p, harness, sid)
+        return _cite(p, _load(p, harness, sid), harness, sid, quote, turn, note, session, space, user)
+
+
+def _cite(p: Path, s: dict, harness: str, sid: str, quote, turn, note, session, space, user) -> dict:
     session = session or s["session"]
     if not session:
         raise ValueError("this conversation is not tracked yet; its hooks or `integration capture` set its session")
     # 소속 없는 대화의 착지는 첫 인용이 그 대화에 고정한다(Mechanism §6-2 6항 · §9-4 3항). Person은
     # 소속 scope가 없을 때만이고(시행령 §2 8항), 고정된 착지와 다른 scope로는 나누지 않는다.
-    bound = write.resolve_session(session)
+    # 일회성 작업 공간의 대화는 그 키에 선 결속을 따르지도, 새로 세우지도 않는다.
+    one_off = _one_off(s)
+    bound = None if one_off else write.resolve_session(session)
     landed = s["space"] or (f"{SCOPE}/{bound}" if bound else None)
     if raw.is_person(space) and landed:
         raise ValueError(f"this conversation belongs to {landed}; cite into that scope, not Person Space")
@@ -1302,13 +1314,10 @@ def cite(conversation: str, quote: str | None = None, turn: str | int | None = N
         with _locked(harness, owner) as pp:
             record = _load(pp, harness, owner)["record"]
     result = raw.append_rounds(session, record, [{"user": words, "agent": (note or "").strip()}],
-                               space or s["space"], cited=meta)
+                               space or s["space"], cited=meta, bind=not one_off)
     if not landed and not raw.is_person(space):
-        with _locked(harness, sid) as p:
-            current = _load(p, harness, sid)
-            if not current["space"]:
-                current["space"] = f"{SCOPE}/{raw.graph.space_of(core.ROOT / result['path'])[1]}"
-                _save(p, current)
+        s["space"] = f"{SCOPE}/{raw.graph.space_of(core.ROOT / result['path'])[1]}"
+        _save(p, s)
     out = {"ok": True, "round_ref": result["round_refs"][0], "path": result["path"],
            "index": result["indices"][0], "turn": rid, "reused": result.get("reused", False),
            "user_by": by, "agent_sha256": meta["agent_sha256"], "filtered": result["filtered"],

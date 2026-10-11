@@ -332,7 +332,7 @@ _CONFINE = ("인용 기록은 세션당 정본 하나이므로(시행령 §2 1�
 
 
 def append_rounds(session: str, record: str, pairs: list,
-                  space: str | None = None, *, cited: dict | None = None) -> dict:
+                  space: str | None = None, *, cited: dict | None = None, bind: bool = True) -> dict:
     """라운드 여럿을 **한 번의 쓰기로** 잇는다. `cited`는 인용 라운드 하나의 원본 턴
     좌표다(Mechanism §9 9항) — 그 라운드는 응답 원문 없이 요지만 둘 수 있고, 같은
     턴의 재인용은 쓰지 않고 기존 좌표를 돌려준다.
@@ -374,7 +374,8 @@ def append_rounds(session: str, record: str, pairs: list,
             # Person에는 결속이 없다 — 소속 scope 없는 세션의 기록은 그 대화가 고른다(integration.cite)
             p, bound = person_record_path(record), True
         else:
-            dest, bound = write.resolve_landing(session, space, _CONFINE)
+            # `bind=False`는 일회성 작업 공간의 대화다 — 그 키의 결속을 따르지도 세우지도 않는다
+            dest, bound = write.resolve_landing(session if bind else None, space, _CONFINE)
             if not dest:
                 raise write.WriteError(
                     "착지 미정 — 쓰지 않았다",
@@ -424,7 +425,7 @@ def append_rounds(session: str, record: str, pairs: list,
                   "filtered": sorted(set(hits))}
         if supersedes:
             result["supersedes"] = supersedes
-        if not bound:
+        if not bound and bind:
             write.bind_after_write(result, session, dest, "첫 세션 기록에서 확정")
         return result
 
