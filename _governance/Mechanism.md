@@ -1,7 +1,7 @@
 ---
 id: 260802-114u-iter
 created: 2026-08-02 13:22 (KST)
-updated: 2026-10-12 01:30 (KST)
+updated: 2026-10-12 01:59 (KST)
 author: user
 drafter: opus-5.5
 summary: "물리 최소 사양 — 배치 선언표, id·rid 형식, 대장 규약, 위임 절, 링크 문법, 비밀값 필터"
@@ -668,6 +668,8 @@ derived-from: "[[2026-07-28-space-structure-deliberation-record]]"
    패턴이 늘어 이미 기록된 부분까지 새로 치환돼야 하면 접두부가 어긋나
    거부되며, 증거를 소급해 고쳐 쓰지 않는다.
 5. 인용 기록의 물리 자리는 `00_Scope/<scope>/_cited/.records/<기록 이름>.txt`다.
+   소속 scope 없이 Person 노드를 남긴 세션(시행령 §2 8항)의 기록은
+   `00_Person/_cited/.records/<기록 이름>.txt`에 둔다.
    Markdown이 아닌 파일을 숨김 디렉터리에 두어 원료가 Obsidian 네이티브의
    노트로 표시되지 않게 한다. 기록 이름은 노드 제목과 같은 이식성 규칙을
    받으며 확장자를 포함한 파일명 길이도 검사한다. 이식성 기준으로 같은 이름은
