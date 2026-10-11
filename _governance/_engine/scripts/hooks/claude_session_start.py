@@ -470,7 +470,11 @@ def main() -> None:
         if not first_call("start", env, host):
             return
         try:
-            rechecks.ensure_baseline(carry=True)
+            from osk import core
+            # 대장 행도 작업 트리의 변경이다 — 판독부터 쓰기까지 변경 잠금 안에서 한다(정기 실행과 같다).
+            # 그 사이 다른 세션의 노드 쓰기가 끼면 낡은 판독으로 이어 적어 방금 닫은 쌍을 다시 연다.
+            with core.mutation_lock():
+                rechecks.ensure_baseline(carry=True)
         except Exception:
             pass    # 다음 쓰기가 다시 적는다 — 못 적으면 근거가 후보로 남을 뿐이다
         from osk.hook_text import Block, assemble

@@ -111,16 +111,17 @@ class GrowthStatusTests(unittest.TestCase):
     def test_recheck_history_separates_baselines_carry_and_direct_judgments(self):
         self.check_case('''
             from osk import rechecks
+            # A version a recheck made is carried as updated (#177): still a carry, not a direct judgment.
             values=[('bound',rechecks.BASELINE),('bound',None),('unchanged',rechecks.CARRIED),
-                    ('unchanged',None),('updated',None)]
+                    ('unchanged',None),('updated',None),('updated',rechecks.CARRIED)]
             rows=[{'rid':str(n),'at':AT,'result':result,'reason':reason}
                   for n,(result,reason) in enumerate(values)]
             rows += [{'rid':'unclocked','result':'updated'},
                      {'rid':'boundary','result':'updated','at':END}]
             out=S._recheck_history(rows,S._time(START),S._time(END))
-            assert out['by_category']=={'baseline':1,'binding':1,'carried':1,
+            assert out['by_category']=={'baseline':1,'binding':1,'carried':2,
                                        'explicit_unchanged':1,'explicit_updated':1},out
-            assert out['records']==5 and out['outside_window']==1,out
+            assert out['records']==6 and out['outside_window']==1,out
             assert out['unknown_time']==['unclocked'],out
         ''')
 

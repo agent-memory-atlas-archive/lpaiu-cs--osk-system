@@ -87,14 +87,16 @@ UPGRADE_CARRY = """
     new_state = rechecks.state
     rechecks.state = lambda data, node=True: core.sha256_bytes(data[contract.body_offset(data):] if node else data)
     node('A')
+    node('D')
     record = core.ROOT / ('00_Scope/W1/_raw/.records/claude-c38d8ef2' + '0' * 24 + '.txt')
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(raw._block(1, 'independent observation', 'observed'), encoding='utf-8')
     reference = '[[' + record.relative_to(core.ROOT).as_posix() + '#1]]'
     evidence = chr(10).join(['', '', '## 근거', '', '- 2026-10-05 · `c38d8ef2#1` · 지지 — an observation'])
-    for title, body, basis in (('B', 'B relies on A.', 'A'), ('C', 'C relies on B.', 'B')):
+    # B also cites D, listed first: every carried row of B says its version was made by a recheck
+    for title, body, basis in (('B', 'B relies on A.', ['D', 'A']), ('C', 'C relies on B.', ['B'])):
         assert write.create_node(title, title, body + evidence, 'gpt-6-astra', space='00_Scope/W1',
-                                 edges={'derived-from': [basis, reference]})['ok']
+                                 edges={'derived-from': basis + [reference]})['ok']
     write.update_node('A', old_text='A reusable observation', new_text='A revised observation')
     write.update_node('B', old_text='B relies on A.', new_text='B relies on revised A.', rechecked=['A'])
     planned = growth.plan(3)
@@ -110,14 +112,26 @@ UPGRADE_CARRY = """
         assert not growth.plan(3)['recheck_jobs'], 'the escalated check returned to the agent queue'
         assert [h['node'] for h in rechecks.report(graph.Index())['escalated']] == ['C']
     held()
+    idx = graph.Index()
+    b = idx.locate('B')[0]
     if V50_CARRY:
-        idx = graph.Index()
-        b, a = (idx.locate(n)[0] for n in ('B', 'A'))
-        core.ledger_append(rechecks.RECHECKS, rechecks._row(
-            idx.node(b).id, rechecks.state(b.read_bytes()), idx.node(a).id, rechecks.state(a.read_bytes()),
-            'unchanged', rechecks.CARRIED))
+        for basis in ('D', 'A'):
+            t = idx.locate(basis)[0]
+            core.ledger_append(rechecks.RECHECKS, rechecks._row(
+                idx.node(b).id, rechecks.state(b.read_bytes()), idx.node(t).id, rechecks.state(t.read_bytes()),
+                'unchanged', rechecks.CARRIED))
         held()
-    assert rechecks.ensure_baseline(carry=True) == 2, 'the cascade and the user review were not both carried'
+    assert rechecks.ensure_baseline(carry=True) == (2 if V50_CARRY else 3), 'cascade and review not both carried'
+    results = {r['result'] for r in core.ledger_read(rechecks.RECHECKS)[-2:] if r['node'] == idx.node(b).id
+               and r['reason'] == rechecks.CARRIED and r['node_state'] == rechecks.state(b.read_bytes())}
+    assert 'updated' in results and (V50_CARRY or results == {'updated'}), results
+    review = core.ledger_read(growth.LEDGER)[-1]
+    assert review['kind'] == 'recheck_review' and (review['reason'], review['proposal']) == (
+        'A second correction needs the user.', 'Change C later.'), review
+    held()
+    # Another device carried the same review before the two synced: a sibling row, equal but for its id.
+    with open(growth.LEDGER, 'a', encoding='utf-8') as f:
+        f.write(json.dumps({**review, 'rid': core._next_rid(review['rid'])}, ensure_ascii=False) + chr(10))
     held()
     # a 근거 section is not a related state — editing the cited node's, then the citing node's
     write.update_node('B', old_text='— an observation', new_text='— an observation, reworded')
@@ -127,6 +141,33 @@ UPGRADE_CARRY = """
     assert rechecks.ensure_baseline(carry=True) == 0, 'a carried record was carried again'
     write.update_node('C', rechecked=['B'])   # the user's decision
     assert not rechecks.report(graph.Index()), rechecks.report(graph.Index())
+"""
+
+# B's version was made by a recheck, then A changed again: no pair of B is complete or carried, yet
+# the cascade C relies on must still move to the current definition (#183 review).
+UPGRADE_NO_PAIR = """
+    from osk import rechecks, raw
+    new_state = rechecks.state
+    rechecks.state = lambda data, node=True: core.sha256_bytes(data[contract.body_offset(data):] if node else data)
+    node('A')
+    record = core.ROOT / ('00_Scope/W1/_raw/.records/claude-c38d8ef2' + '0' * 24 + '.txt')
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(raw._block(1, 'independent observation', 'observed'), encoding='utf-8')
+    reference = '[[' + record.relative_to(core.ROOT).as_posix() + '#1]]'
+    evidence = chr(10).join(['', '', '## 근거', '', '- 2026-10-05 · `c38d8ef2#1` · 지지 — an observation'])
+    for title, body, basis in (('B', 'B relies on A.', 'A'), ('C', 'C relies on B.', 'B')):
+        assert write.create_node(title, title, body + evidence, 'gpt-6-astra', space='00_Scope/W1',
+                                 edges={'derived-from': [basis, reference]})['ok']
+    write.update_node('A', old_text='A reusable observation', new_text='A revised observation')
+    write.update_node('B', old_text='B relies on A.', new_text='B relies on revised A.', rechecked=['A'])
+    write.update_node('A', old_text='A revised observation', new_text='A twice revised observation')
+    rechecks.state = new_state   # the upgrade
+    cascade = lambda: {i['node']: i['cascade'] for i in rechecks.candidates(graph.Index())[0]}
+    assert cascade() == {'B': False, 'C': True}, cascade()
+    assert rechecks.ensure_baseline(carry=True) == 1
+    write.update_node('B', old_text='— an observation', new_text='— an observation, reworded')
+    assert cascade() == {'B': False, 'C': True}, cascade()
+    assert rechecks.ensure_baseline(carry=True) == 0
 """
 
 
@@ -560,6 +601,9 @@ class GrowthTests(unittest.TestCase):
         # reproduced both being lost on 2026-10-07), and an edit of a 근거 section after the carry
         # must not drop them (#177).
         self.check_case(UPGRADE_CARRY.replace('V50_CARRY', 'False'))
+
+    def test_a_recheck_made_version_carries_when_no_pair_is_complete(self):
+        self.check_case(UPGRADE_NO_PAIR)
 
     def test_a_v5_0_carry_still_keeps_the_cascade_after_an_evidence_edit(self):
         # v5.0.x carried the completion as `unchanged` and left the user review as it was. While
