@@ -314,5 +314,49 @@ def run():
         print('raw storage ingress/egress: PASS (reject legacy, accept dialogue, preserve rejected bytes)')
 
 
+def keep_local():
+    """루트 무시 규칙에 `.osk/`가 없는 옛 vault — 이미 실린 로컬 상태는 추적만 풀고, 뒤의 것은 싣지 않는다."""
+    with tempfile.TemporaryDirectory(prefix='osk-local-') as td:
+        root, bare = Path(td) / 'vault', Path(td) / 'remote.git'
+        root.mkdir()
+        import sync_daemon as sync
+        import vault_sync as vs
+
+        def git(*args, at=root):
+            r = vs._git(at, list(args), 30)
+            assert r.returncode == 0, (args, r.stdout, r.stderr)
+            return r.stdout.strip()
+
+        def local_paths(tree):
+            return [p for p in tree.split('\n') if p.startswith('.osk/')]
+
+        git('init', '-q', '-b', 'main')
+        for key, value in [('user.name', 'fixture'), ('user.email', 'fixture@example.invalid'),
+                           ('core.autocrlf', 'false'), ('commit.gpgsign', 'false')]:
+            git('config', key, value)
+        run_log = root / '.osk/growth/runs/a/stdout.txt'
+        run_log.parent.mkdir(parents=True)
+        run_log.write_text('worker output')
+        (root / '.osk/response-growth.json').write_text('{"claude": "C:/this-device/claude.exe"}')
+        (root / 'note.txt').write_text('base')
+        git('add', '-A')
+        git('commit', '-qm', 'legacy vault tracked its local state')
+        git('init', '-q', '--bare', '-b', 'main', str(bare))
+        git('remote', 'add', 'origin', str(bare))
+        git('push', '-qu', 'origin', 'main')
+
+        assert sync.once(root) == 'ok'
+        assert local_paths(git('ls-tree', '-r', '--name-only', 'HEAD')) == ['.osk/.gitignore']
+        assert local_paths(git('ls-tree', '-r', '--name-only', 'main', at=bare)) == ['.osk/.gitignore']
+        assert run_log.read_text() == 'worker output', 'untracking must keep this device file'
+        later = root / '.osk/growth/runs/b/stdout.txt'
+        later.parent.mkdir(parents=True)
+        later.write_text('later output')
+        assert sync.once(root) == 'ok'
+        assert local_paths(git('ls-tree', '-r', '--name-only', 'main', at=bare)) == ['.osk/.gitignore']
+        print('local state stays local: PASS (legacy vault untracked, later runs ignored)')
+
+
 if __name__ == '__main__':
     run()
+    keep_local()
