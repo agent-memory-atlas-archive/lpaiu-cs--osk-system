@@ -357,6 +357,61 @@ def keep_local():
         print('local state stays local: PASS (legacy vault untracked, later runs ignored)')
 
 
+def receiving_device():
+    """다른 기기(B)가 A의 추적 해제를 받는다 — B도 이 엔진이면 자기 `.osk/`를 지킨다.
+    B에 아직 올리지 못한 `.osk/` 수정 커밋이 있어도 modify/delete 충돌로 멈추지 않는다."""
+    import sync_daemon as sync
+    import vault_sync as vs
+    for unpushed in (False, True):
+        with tempfile.TemporaryDirectory(prefix='osk-receive-') as td:
+            bare, a, b = Path(td) / 'remote.git', Path(td) / 'a', Path(td) / 'b'
+
+            def git(*args, at):
+                r = vs._git(at, list(args), 30)
+                assert r.returncode == 0, (args, r.stdout, r.stderr)
+                return r.stdout.strip()
+
+            def configure(at):
+                for key, value in [('user.name', 'fixture'), ('user.email', 'fixture@example.invalid'),
+                                   ('core.autocrlf', 'false'), ('commit.gpgsign', 'false')]:
+                    git('config', key, value, at=at)
+
+            a.mkdir()
+            git('init', '-q', '-b', 'main', at=a)
+            configure(a)
+            (a / '.osk').mkdir()
+            (a / '.osk/response-growth.json').write_text('A paths')
+            (a / 'note.txt').write_text('base')
+            git('add', '-A', at=a)
+            git('commit', '-qm', 'legacy vault', at=a)
+            git('init', '-q', '--bare', '-b', 'main', str(bare), at=a)
+            git('remote', 'add', 'origin', str(bare), at=a)
+            git('push', '-qu', 'origin', 'main', at=a)
+            git('clone', '-q', str(bare), str(b), at=a)
+            configure(b)
+            (b / '.osk/response-growth.json').write_text('B paths')        # B의 옛 엔진이 실은 B의 설정
+            (b / '.osk/growth/runs/rb').mkdir(parents=True)
+            (b / '.osk/growth/runs/rb/out.txt').write_text('B run')
+            git('add', '-A', at=b)
+            git('commit', '-qm', 'B config', at=b)
+            git('push', '-q', at=b)
+            git('pull', '-q', '--rebase', at=a)
+            if unpushed:                                                    # B가 끊긴 사이 다시 고친 설정
+                (b / '.osk/response-growth.json').write_text('B paths v2')
+                git('add', '-A', at=b)
+                git('commit', '-qm', 'B config v2', at=b)
+
+            assert sync.once(a) == 'ok'                                     # A가 추적을 풀어 올린다
+            assert sync.once(b) == 'ok', 'B stopped on its own local state'
+            expected = 'B paths v2' if unpushed else 'B paths'
+            assert (b / '.osk/response-growth.json').read_text() == expected
+            assert (b / '.osk/growth/runs/rb/out.txt').read_text() == 'B run'
+            tree = git('ls-tree', '-r', '--name-only', 'main', at=bare)
+            assert [p for p in tree.split('\n') if p.startswith('.osk/')] == ['.osk/.gitignore'], tree
+    print('receiving device keeps its local state: PASS (pushed and unpushed local commits)')
+
+
 if __name__ == '__main__':
     run()
     keep_local()
+    receiving_device()

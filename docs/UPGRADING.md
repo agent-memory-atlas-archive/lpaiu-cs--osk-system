@@ -7,6 +7,26 @@ listed below. Routine updates are covered in
 [Getting started, Keeping up to date](GETTING-STARTED.md#keeping-up-to-date)
 and in [SETUP](SETUP.md) (Korean).
 
+## Vaults that committed `.osk/`
+
+`.osk/` holds device-local settings. In an older vault whose ignore rules lack
+`.osk/`, the sync daemon committed what lives there (run records, and
+`response-growth.json` with this device's CLI paths) and sent it to every
+device. The daemon now puts an ignore rule inside `.osk/` that keeps only
+itself, and stops tracking what was already committed. The files stay on the
+device.
+
+- **Update every device together.** An updated device stops tracking its own
+  `.osk/` before it takes another device's untracking, so its files stay. A
+  device that has not been updated loses the `.osk/` files it tracked when it
+  takes that change, or its sync stops on a conflict. If files were removed,
+  run `osk setup` on that device to recreate its settings. Run records remain
+  in Git history.
+- **Pull before the daemon on a device that has been off for a while.** An
+  older daemon commits before it pulls, so it can commit that device's `.osk/`
+  files again. Before you start the daemon, run `git pull` to take the ignore
+  rule (`.osk/.gitignore`) first, or update the engine first.
+
 ## From v4.1 to v5.0
 
 v5.0 stops copying conversations into the vault. The hooks track each finished

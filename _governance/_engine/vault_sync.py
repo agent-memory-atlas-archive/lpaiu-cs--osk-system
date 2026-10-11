@@ -2,7 +2,8 @@
 
 git은 서브프로세스 + 하드 타임아웃으로 격리하고, 요청 서빙 경로를 절대 블록하지 않게
 호출부(sync_daemon)에서 스케줄한다. Obsidian 그래프의 배율만 다른 충돌은 로컬 값을
-보존한다. 그 밖의 충돌은 원복(rebase --abort)·보고한다 — 사용자 데이터 임의 선택 금지.
+보존하고, 기기 로컬 설정(`.osk/`)만의 충돌은 추적만 풀어 이 기기의 파일을 남긴다. 그 밖의
+충돌은 원복(rebase --abort)·보고한다 — 사용자 데이터 임의 선택 금지.
 
 동기화 대상은 `SYNC_BRANCH`(=main) **고정**이다. 원격 연산은 전부 `origin main`을
 명시하며, HEAD가 다른 곳에 있으면 `ensure_branch`가 안전할 때만 되돌린다.
@@ -217,6 +218,20 @@ def _resolve_graph_scale(vault_root, timeout):
     return True
 
 
+def _resolve_local_state(vault_root, timeout):
+    """충돌이 모두 `.osk/`(기기 로컬 설정, Mechanism §1-2 5항) 아래면 추적만 풀어 해결한다.
+
+    다른 기기가 추적을 푼 커밋(sync_daemon._keep_local)과, 이 기기가 아직 올리지 못한 옛
+    커밋이 같은 파일을 두고 부딪힌 경우다. 삭제 쪽으로 풀되 작업 트리의 파일은 그대로
+    둔다 — 기기 로컬 상태라 사용자 데이터를 고르는 일이 아니다.
+    """
+    r = _git(vault_root, ["diff", "--name-only", "--diff-filter=U", "-z"], timeout)
+    paths = [p for p in r.stdout.split("\0") if p] if r.returncode == 0 else []
+    if not paths or any(not p.startswith(".osk/") for p in paths):
+        return False
+    return _git(vault_root, ["rm", "--cached", "-q", "--", *paths], timeout).returncode == 0
+
+
 @contextmanager
 def fetch_snapshot(vault_root, timeout=60):
     """Fetch without changing the worktree; pin one result until rebase finishes.
@@ -303,14 +318,20 @@ def _rebase(vault_root, command, timeout):
             return (False, "error", f"{pending} 진행 중 — pull하지 않는다(수동 개입 필요)")
         before = _head(vault_root, timeout)
         r = _git(vault_root, command, timeout)
-        resolved = set()
+        resolved = {}               # 같은 커밋에서 멈추면 다시 고르지 않는다.
         while r.returncode != 0 and _in_rebase(vault_root, timeout):
             pick = _git(vault_root, ["rev-parse", "--verify", "REBASE_HEAD"], timeout)
-            if (pick.returncode != 0 or pick.stdout in resolved
-                    or not _resolve_graph_scale(vault_root, timeout)):
+            if pick.returncode != 0 or pick.stdout in resolved:
                 break
-            resolved.add(pick.stdout)  # 같은 커밋에서 멈추면 다시 고르지 않는다.
-            r = _git(vault_root, ["rebase", "--continue"], timeout)
+            if _resolve_graph_scale(vault_root, timeout):
+                resolved[pick.stdout] = "graph"
+            elif _resolve_local_state(vault_root, timeout):
+                resolved[pick.stdout] = "local"
+            else:
+                break
+            # `.osk/`만 바꾼 커밋은 추적을 풀면 비므로 건너뛴다(작업 트리의 파일은 남는다).
+            empty = _git(vault_root, ["diff", "--cached", "--quiet"], timeout).returncode == 0
+            r = _git(vault_root, ["rebase", "--skip" if empty else "--continue"], timeout)
         if r.returncode != 0:
             out = (r.stdout + r.stderr)
             low = out.lower()
@@ -327,8 +348,11 @@ def _rebase(vault_root, command, timeout):
                 return (False, "conflict", (conflicts + "\n" + out.strip()[-600:]).strip())
             return (False, "error", out.strip()[-600:])
         after = _head(vault_root, timeout)
-        detail = (f".obsidian/graph.json 배율 충돌 {len(resolved)}개 자동 해결 — 로컬 값 보존"
-                  if resolved else "")
+        kinds = list(resolved.values())
+        detail = "; ".join(text for kind, text in (
+            ("graph", f".obsidian/graph.json 배율 충돌 {kinds.count('graph')}개 자동 해결 — 로컬 값 보존"),
+            ("local", f".osk/ 충돌 {kinds.count('local')}개 자동 해결 — 추적만 풀고 이 기기의 파일 보존"),
+        ) if kind in kinds)
         return (before != after, "ok", detail)
     except subprocess.TimeoutExpired:
         return (False, "error", f"git pull timeout ({timeout}s)")
