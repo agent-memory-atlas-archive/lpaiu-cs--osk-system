@@ -438,22 +438,55 @@ def ensure_baseline(idx=None, *, carry: bool = False) -> int:
 
 
 def _carry(idx) -> int:
-    """근거 절을 빼기 전의 정의로 잰 기록을, 내용이 그대로인 쌍만 지금 정의로 다시
-    적는다(`unchanged`, 사유 `이어받음`). 적지 않으면 그 근거 절을 처음 고칠 때 그
-    쌍이 한 번 후보가 된다."""
+    """근거 절을 빼기 전의 정의로 잰 기록을, 내용이 그대로인 동안 지금 정의로 다시 적는다
+    (사유 `이어받음`). 노드의 그 판이 재검토로 고친 판이면 `updated`(cascade의 근거)를,
+    아니면 `unchanged`를 잇는다 — 이미 `unchanged`로 이어 적은 노드(v5.0.x)도 그 판이 옛
+    정의로만 `updated`면 한 행을 더 적는다. 사용자 검토에 올린 기록도 잇는다. 적지 않으면
+    그 근거 절을 처음 고칠 때 완료·cascade·사용자 검토가 풀린다(#177)."""
     recs, ok = _read()
     if not ok or not recs:
         return 0
-    latest, lc, rows = _latest(recs), {}, []
+    latest, lc, rows, held = _latest(recs), {}, [], {}
+    revised = {(r.get("node"), r.get("node_state")) for r in recs
+               if r.get("kind") == "complete" and r.get("result") == "updated"}
     for _name, nid, ns, ps, _kind in _citing(idx, {}):
+        fixed = (nid, ns) not in revised and (nid, _legacy(idx, nid, lc)) in revised
         for key, (ts, _ref) in ps.items():
+            if ts is None:
+                continue
             maxima = latest.get((nid, key), [])
-            if (ts is not None and _verdict(maxima, ns, ts) is not None
-                    and _carried(maxima, idx, nid, ns, key, ts, lc)):
-                rows.append(_row(nid, ns, key, ts, "unchanged", CARRIED))
+            done = _verdict(maxima, ns, ts) is None
+            if (fixed and done) or (not done and _carried(maxima, idx, nid, ns, key, ts, lc)):
+                rows.append(_row(nid, ns, key, ts, "updated" if fixed else "unchanged", CARRIED))
+                fixed = False           # 한 행이면 그 판이 cascade의 근거가 된다
+            elif not done:
+                held[f"recheck:{nid}:{key}"] = (nid, key, ns, ts)
     if rows:
         ledger_extend(RECHECKS, rows)
-    return len(rows)
+    return len(rows) + _carry_reports(idx, held, lc)
+
+
+def _carry_reports(idx, held: dict, cache: dict) -> int:
+    """후보로 남은 쌍의 사용자 검토 기록(`recheck_review`, `escalated`)을 내용이 그대로인 동안
+    지금 정의의 두 상태로 다시 적는다 — 수정안과 이유는 그대로다."""
+    try:
+        from . import growth
+        rows = growth._records()
+    except Exception:
+        return 0
+    keys = {r.get("key") for r in rows if r.get("kind") == "recheck_review"} & held.keys()
+    par, out = effective_parents(rows), []
+    for k in sorted(keys):
+        nid, key, ns, ts = held[k]
+        r = growth._latest(rows, k, "key", par) or {}
+        was = (r.get("node_state"), r.get("target_state"))
+        if (r.get("kind") == "recheck_review" and r.get("outcome") == "escalated" and was != (ns, ts)
+                and _alike(idx, nid, key, ns, ts, *was, cache)):
+            out.append({**{f: v for f, v in r.items() if f not in ("rid", "parents", "at")},
+                        "node_state": ns, "target_state": ts})
+    if out:
+        ledger_extend(growth.LEDGER, out)
+    return len(out)
 
 
 def _presented(nid: str, key: str) -> str | None:
