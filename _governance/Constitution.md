@@ -1,7 +1,7 @@
 ---
 id: 260802-114u-w9vj
 created: 2026-08-02 13:22 (KST)
-updated: 2026-10-06 07:25 (KST)
+updated: 2026-10-12 01:04 (KST)
 author: user
 drafter: opus-5.5
 summary: "osk-system 최상위 규범 — 노드·비노드와 Space, 참조 위상, 위임, 보호영역, 사건, 개정·이행"
@@ -124,7 +124,7 @@ derived-from: "[[2026-07-28-space-structure-deliberation-record]]"
    system의 개입으로 유발된 반응은 그 개입의 근거가 된 추론을 독립적으로
    뒷받침하는 증거로 다시 사용할 수 없다.
 8. Person Space의 노드는 그 근거인 노드나 비노드를 `derived-from`으로
-   참조한다. Person Space에는 원 세션의 미가공 원자료를 중복 보관하지 않는다.
+   참조한다.
 9. 에이전트의 관측과 추론 하에 자율적으로 작성되는 facet의 형성·분화와
    구성 노드의 재배정은 규칙 아래 자동화가 기본이며, 사용자는 필요시
    개입·수정·고정할 수 있다. facet은 사용자상의 한 측면을 일관되게 설명할
