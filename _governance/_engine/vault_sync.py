@@ -42,23 +42,26 @@ def _git(vault_root, args, timeout, *, text=True):
 def is_git_repo(vault_root, timeout=10) -> bool:
     """vault_root가 저장소 **루트**일 때만 참. `--is-inside-work-tree`는 하위
     디렉터리도 통과시켜, OSK_VAULT_ROOT를 잘못 잡으면 상위 저장소 전체를
-    커밋·push하게 된다."""
-    try:
-        r = _git(vault_root, ["rev-parse", "--show-toplevel"], timeout)
-        top = r.stdout.strip()
-        if r.returncode != 0 or not top:
+    커밋·push하게 된다.
+
+    거짓은 git이 "저장소가 아니다"라고 답했거나, 답한 최상위가 vault_root가 아닐
+    때뿐이다. timeout·git 실패는 답이 아니므로 그대로 올린다 — 거짓으로 접으면 굶은
+    데몬의 timeout이 매 주기 "git 저장소 아님"으로 둔갑해 원인이 가려진다(2026-10-12 실측)."""
+    r = _git(vault_root, ["rev-parse", "--show-toplevel"], timeout)
+    if r.returncode != 0:
+        if "not a git repository" in r.stderr:
             return False
-        return os.path.realpath(top) == os.path.realpath(str(vault_root))
-    except Exception:
-        return False
+        raise RuntimeError(f"git 저장소 판독 실패: {r.stderr.strip()[-600:]}")
+    top = r.stdout.strip()
+    return bool(top) and os.path.realpath(top) == os.path.realpath(str(vault_root))
 
 
 def has_remote(vault_root, timeout=10) -> bool:
-    try:
-        r = _git(vault_root, ["remote"], timeout)
-        return r.returncode == 0 and bool(r.stdout.strip())
-    except Exception:
-        return False
+    """원격 유무. is_git_repo와 같이 판독 실패는 "원격 없음"으로 접지 않는다."""
+    r = _git(vault_root, ["remote"], timeout)
+    if r.returncode != 0:
+        raise RuntimeError(f"git remote 판독 실패: {r.stderr.strip()[-600:]}")
+    return bool(r.stdout.strip())
 
 
 def _head(vault_root, timeout):

@@ -11583,6 +11583,64 @@ def test_sync_pending_git_operations():
         rmtree_force(temp)
 
 
+def test_sync_git_unknown_is_not_absent():
+    """git이 답하지 못한 것(timeout·실패)을 "저장소 아님"·"원격 없음"으로 접지 않고,
+    낮은 등급으로 뜬 데몬도 git은 보통 등급으로 띄운다. 2026-10-12 실측: 예약 작업
+    우선순위 7(BELOW_NORMAL)의 데몬이 CPU 포화에서 굶어 `rev-parse` 10초 timeout이
+    수주간 "git 저장소 아님"으로, `remote` timeout이 "원격 없음"으로 기록됐다."""
+    import sync_daemon, vault_sync
+    temp = Path(tempfile.mkdtemp(prefix="osk-sync-unknown-"))
+    repo, plain = temp / "repo", temp / "plain"
+    try:
+        repo.mkdir()
+        plain.mkdir()
+        vault_sync._git(repo, ["init", "-q", "-b", "main"], 30)
+        vault_sync._git(repo, ["remote", "add", "origin", str(temp / "origin.git")], 30)
+        check("저장소가 아닌 자리는 그대로 '저장소 아님'",
+              sync_daemon.once(plain) == "git 저장소 아님")
+        real = vault_sync._git
+        for verb, fault in (("rev-parse", "timeout"), ("rev-parse", "error"),
+                            ("remote", "timeout"), ("remote", "error")):
+            def faulty(root, args, timeout, **kw):
+                if args[0] != verb:
+                    return real(root, args, timeout, **kw)
+                if fault == "timeout":
+                    raise subprocess.TimeoutExpired(["git", *args], timeout)
+                return subprocess.CompletedProcess(args, 128, "", "fatal: detected dubious ownership")
+            with mock.patch.object(vault_sync, "_git", side_effect=faulty):
+                try:
+                    status = sync_daemon.once(repo)
+                except (subprocess.TimeoutExpired, RuntimeError) as e:
+                    status = e
+            check(f"{verb} {fault}: 모름을 '없음'으로 접지 않는다",
+                  isinstance(status, Exception), status)
+        if os.name != "nt":
+            skip("BELOW_NORMAL로 뜬 데몬의 git 등급", "Windows 우선순위 등급")
+            return
+        # 굶은 채 import하면 수트가 분 단위로 멈추므로, import 뒤에 등급을 낮춘다.
+        # 등급은 데몬 자신이 아니라 _git이 띄운 git 프로세스에서 읽는다.
+        code = ("import ctypes, subprocess, sys, vault_sync, sync_daemon\n"
+                "k32 = ctypes.windll.kernel32\n"
+                "k32.SetPriorityClass(ctypes.c_void_p(-1), 0x4000)\n"
+                "seen = []\n"
+                "class Spy(subprocess.Popen):\n"
+                "    def __init__(self, *a, **k):\n"
+                "        super().__init__(*a, **k)\n"
+                "        seen.append(k32.GetPriorityClass(ctypes.c_void_p(int(self._handle))))\n"
+                "subprocess.Popen = Spy\n"
+                "sys.argv = ['sync_daemon.py', '--once']\n"
+                "sync_daemon.main()\n"
+                "print(sorted(set(seen)))\n")
+        r = subprocess.run([sys.executable, "-c", code], cwd=ENGINE, capture_output=True,
+                           encoding="utf-8", errors="replace", timeout=120,
+                           env=dict(os.environ, SYNC_ENABLED="1", OSK_VAULT_ROOT=str(plain),
+                                    PYTHONIOENCODING="utf-8"))
+        check("BELOW_NORMAL로 뜬 데몬도 git을 보통 등급(0x20)으로 띄운다",
+              r.returncode == 0 and "[32]" in r.stdout, (r.returncode, r.stdout, r.stderr[-300:]))
+    finally:
+        rmtree_force(temp)
+
+
 def test_publish_binds_checked_bytes():
     """검사 후 원본 변경은 plan·설치·커밋의 바이트를 바꾸지 않는다."""
     src = ROOT / "_governance" / "publish-snapshot.txt"
@@ -12272,7 +12330,8 @@ if __name__ == "__main__":
                test_governance_amend_secrets_and_region,
                test_region_root_is_not_an_excluded_compartment,
                test_setup_doc_drift, test_turn_ledger, test_evictions,
-               test_sync_pending_git_operations, test_publish_binds_checked_bytes,
+               test_sync_pending_git_operations, test_sync_git_unknown_is_not_absent,
+               test_publish_binds_checked_bytes,
                test_publish_validator_uses_snapshot, test_publish_external_engine_preserves_manifest,
                test_validate_at_uses_snapshot_engine, test_publish_preserves_mapped_dot_directories,
                 test_write_edge_coordinates, test_node_heading_edge_coordinates,
