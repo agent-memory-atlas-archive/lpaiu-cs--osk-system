@@ -133,6 +133,22 @@ def _raw_boundary(root: Path, remote: str | None = None, *, base: str | None = N
     return errors
 
 
+def _keep_local(root: Path) -> None:
+    """`.osk/`는 기기 로컬 설정이다(Mechanism §1-2 5항). 루트 무시 규칙에 `.osk/`가 없는
+    옛 vault에서도 `git add -A`가 실행 기록과 이 기기의 CLI 경로를 싣지 않게 한다 — 자기만
+    싣는 규칙 파일이 동기화되어 다른 기기의 판본과 상관없이 같은 무시가 걸린다. 이미 실린
+    것은 추적만 푼다(파일은 그대로다)."""
+    local = root / ".osk"
+    if not local.is_dir():
+        return
+    rule = local / ".gitignore"
+    if not rule.is_file():
+        rule.write_text("*\n!.gitignore\n", encoding="utf-8")
+    tracked = vault_sync._git(root, ["ls-files", "-z", "--", ".osk"], 30, text=False)
+    if tracked.returncode == 0 and set(tracked.stdout.split(b"\0")) - {b"", b".osk/.gitignore"}:
+        vault_sync._git(root, ["rm", "-r", "--cached", "--quiet", "--", ".osk"], 60)
+
+
 def _once_locked(root: Path, fetched: tuple[str, str | None] | None) -> tuple[str, str | None]:
     # 동기화 대상은 main 고정이다. HEAD를 따라가면 어떤 세션이 잠깐 다른
     # 브랜치를 checkout해 둔 사이에 그 브랜치가 정본인 양 커밋·push된다.
@@ -152,6 +168,10 @@ def _once_locked(root: Path, fetched: tuple[str, str | None] | None) -> tuple[st
                 return f"raw-storage ({source}) — sync paused; update the writer and repair the listed records: " + "; ".join(errors[:5]), None
     except (OSError, UnicodeError, RuntimeError) as e:
         return f"raw-storage inspection failed — sync paused: {e}", None
+    try:
+        _keep_local(root)
+    except OSError as e:
+        print(f"sync: .osk/를 로컬로 두지 못했다 — {e}", file=sys.stderr)
     msg = f"sync: {datetime.now():%Y-%m-%d %H:%M:%S} (daemon)"
     ok, st, detail = vault_sync.commit_local(root, msg)
     if st != "ok":
