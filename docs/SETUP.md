@@ -175,6 +175,9 @@ vault 밖에서 쓰는 파일은 아래뿐이다(Mechanism §1-2 8항). 설정 �
 - Windows 작업은 `pythonw.exe`로 돌아 창이 뜨지 않는다. 정기 실행의 보고는 실행마다
   `.osk/growth/scheduler/<시각>.log`에, 데몬의 알림은 git 디렉터리의 `osk-sync-daemon.log`에
   남는다. 동기화 작업은 `cmd.exe`로 `SYNC_ENABLED=1`을 세우고 데몬을 떼어 띄운다.
+- Windows 작업은 우선순위 5(보통 등급)로 등록한다. 작업 스케줄러의 기본 7은 BELOW_NORMAL이라,
+  다른 일이 CPU를 채우면 작업과 그 git이 굶은 채 mutation 잠금을 쥔다. 우선순위가 다른 이
+  vault의 작업은 다시 등록한다.
 - 실행 직전에 다시 계획해, 확인한 뒤 등록이 바뀌었으면 하지 않는다.
 - 정의가 같아도 서비스 관리자에 올라가 실제로 돌고 있지 않으면 다시 등록한다 — 등록
   명령이 실패해 파일만 남았거나 사용자가 꺼 둔 경우다. launchd는 `launchctl print`,

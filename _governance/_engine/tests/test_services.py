@@ -140,7 +140,8 @@ class Tasks(services.TaskScheduler):
             'path': '\\', 'name': spec['name'],
             'actions': [{'execute': spec['execute'], 'arguments': spec['arguments'], 'workdir': spec['workdir']}],
             'triggers': [{'kind': 'MSFT_TaskDailyTrigger' if spec['at'] else 'MSFT_TaskLogonTrigger', 'start': start}],
-            'battery': False, 'limit': f"PT{spec['minutes']}M" if spec['minutes'] else 'PT0S'}
+            'battery': False, 'limit': f"PT{spec['minutes']}M" if spec['minutes'] else 'PT0S',
+            'priority': spec['priority']}
     def _export(self, path, name):
         return '<Task/>'
     def _unregister(self, path, name):
@@ -182,6 +183,12 @@ assert services.plan(m, 'sync', sync, False)['action'] == 'keep'
 m.store['\\' + m.ident('sync')]['enabled'] = False
 assert services.plan(m, 'sync', sync, False)['action'] == 'replace'
 m.store['\\' + m.ident('sync')]['enabled'] = True
+# A task at Task Scheduler's default priority 7 (BELOW_NORMAL) starves under a full CPU while it
+# holds the mutation lock: it is registered again at the normal priority.
+assert m.store['\\' + m.ident('sync')]['priority'] == services.TASK_PRIORITY == 5
+m.store['\\' + m.ident('sync')]['priority'] = 7
+assert services.plan(m, 'sync', sync, False)['action'] == 'replace'
+m.store['\\' + m.ident('sync')]['priority'] = 5
 # A registration that appears after the confirmation is not overwritten.
 p = services.plan(m, 'growth', None, True)
 m.store['\\osk-domain-growth'] = dict(m.store['\\' + m.ident('growth')], name='osk-domain-growth')
