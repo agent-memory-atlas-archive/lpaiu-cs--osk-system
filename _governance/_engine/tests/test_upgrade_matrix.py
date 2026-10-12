@@ -93,6 +93,7 @@ RELEASES = {
     "v4.1.2": "9bbf08febc5a1fb2af068006735ed79cbdb71178",
     "v4.1.3": "edf9523fe32c5d9a08ab41b95dd464b3d0fe433f",
     "v4.1.8": "4ec2809f0c5eb6e52c92525035820867381c91d6",
+    "v5.0.1": "caa8ec52a282002eea414a37b1d0a8fe40c5410e",
 }
 LAYOUTS = {"=": "= ", "bare": "", "00_": "00_"}
 # (start, layout) -> the release whose fresh install gave the vault that layout
@@ -121,11 +122,14 @@ CELLS = {
     ("v4.1.8", "00_"): None,
     ("v4.1.8", "="): "v3.20.0",
     ("v4.1.8", "bare"): "v3.20.1",
+    ("v5.0.1", "00_"): None,
+    ("v5.0.1", "="): "v3.20.0",
+    ("v5.0.1", "bare"): "v3.20.1",
 }
 # Per PR: the oldest updater (no gate, no baseline, legacy roots), the newest
 # release on its shipped layout, and the newest release on the legacy layout
 # (most early vaults). The release workflow runs every cell (OSK_MATRIX=full).
-PR_CELLS = [("v3.20.0", "="), ("v4.1.8", "00_"), ("v4.1.8", "=")]
+PR_CELLS = [("v3.20.0", "="), ("v5.0.1", "00_"), ("v5.0.1", "=")]
 # How each release's own docs make a vault. Until v3.22 the README said "clone
 # and switch to your own remote" and nothing recorded a release baseline, so the
 # first update stops on "engine drift" and tells the user to rerun with --adopt.
@@ -277,12 +281,14 @@ def _drive_content(cfg: dict) -> dict:
         new_cluster(title="W1", summary="Matrix work scope hub",
                     body="Work scope of the upgrade matrix. [[Alpha]] [[Beta]]",
                     drafter=DRAFTER, session=key, space=f"{S}/W1")
-        raw1 = ok("append_raw", key, "matrix-log", "How do we keep vaults alive?",
-                  "Update them with their own updater and check everything.")
-        out["round1"] = raw1["round_ref"]
+        # From v5.0 an engine stores no dialogue on its own: it cites a turn once one exists (phase B).
+        raw1 = (ok("append_raw", key, "matrix-log", "How do we keep vaults alive?",
+                   "Update them with their own updater and check everything.")
+                if hasattr(m, "append_raw") else None)
+        out["round1"] = raw1 and raw1["round_ref"]
         ok("create_node", title="Alpha", summary="Alpha keeps vaults alive",
            body="Alpha: an update must keep every vault usable. See [[Beta]].",
-           drafter=DRAFTER, session=key, edges={"derived-from": raw1["round_ref"]})
+           drafter=DRAFTER, session=key, edges={"derived-from": raw1["round_ref"]} if raw1 else None)
         ok("create_node", title="Beta", summary="Beta follows Alpha",
            body="Beta follows [[Alpha]] with a concrete check.",
            drafter=DRAFTER, session=key, edges={"derived-from": "Alpha"})
@@ -349,9 +355,13 @@ def _drive_content(cfg: dict) -> dict:
            body="Zeta belongs to [[W1]]: keep vaults working.", drafter=DRAFTER, session=key,
            edges={"derived-from": "Alpha"}, settle=ev["evicted"])
         ok("update_node", "W1", old_text="[[Beta]]", new_text="[[Beta]] [[Zeta]]")
-        raw2 = ok("append_raw", key, "matrix-log", "And after an update?",
-                  "The same checks, with the new engine.")
-        out["round2"] = raw2["round_ref"]
+        # A v5 engine cites the first turn unless an older engine already stored the dialogue.
+        raw2 = (ok("append_raw", key, "matrix-log", "And after an update?",
+                   "The same checks, with the new engine.")
+                if hasattr(m, "append_raw") else
+                ok("cite_round", f"claude/{SID}", quote="matrix question 1", note="matrix answer 1")
+                if cfg.get("cite") else None)
+        out["round2"] = raw2 and raw2["round_ref"]
         overflow()
         ok("scope_memory", key, edits=[{"old_text": "\n- Scratch note to evict.", "new_text": ""}])
         region = f"{D}/Topic"
@@ -725,7 +735,7 @@ def run_cell(up: Upstream, cand: str, work: Path, start: str, layout: str) -> di
         conv.turn()
         if via:
             _update(vault, start, res["steps"])                  # the via release's updater
-        b = _drive(vault, "content", {**cfg, "phase": "B"})
+        b = _drive(vault, "content", {**cfg, "phase": "B", "cite": not a["round1"]})
         conv.turn()
         facts["content"] = {**a, **b}
         check("S: region clean after its approvals", a["region_A"] == b["region_B"] == "clean",
@@ -813,7 +823,7 @@ def run_cell(up: Upstream, cand: str, work: Path, start: str, layout: str) -> di
 
         names = ["W1", "Alpha", "Beta", "Zeta", "Topic", "Delta", "Epsilon", "Pat", "Topic2"]
         mc = _drive(vault, "mcp", {"key": KEY, "names": names, "space": f"{S}/W1",
-                                   "rounds": [a["round1"], b["round2"]],
+                                   "rounds": [r for r in (a["round1"], b["round2"]) if r],
                                    "legacy": a["legacy"]})
         # v4 enforces Mechanism §1 4항: `_` directories are not node places. The files
         # stay byte-identical (the data check above); the release notes carry the move.

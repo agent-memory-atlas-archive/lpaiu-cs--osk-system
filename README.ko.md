@@ -163,7 +163,7 @@ v4가 더는 읽지 않는 배치와 옮기는 법이 있다.
 시작한다(새 태그는 [릴리스 페이지](https://github.com/lpaiu-cs/osk-system/releases)에 있다):
 
 ```bash
-git clone --branch v5.0.0 https://github.com/lpaiu-cs/osk-system.git my-osk-vault
+git clone --branch v5.1.0 https://github.com/lpaiu-cs/osk-system.git my-osk-vault
 cd my-osk-vault
 git switch -c main
 python _governance/_engine/scripts/setup.py --interactive
@@ -307,8 +307,9 @@ PYTHONPATH=_governance/_engine .venv/bin/python -m osk.cli search "프로젝트 
 설치·운용 방법은 [docs/SETUP.md](docs/SETUP.md)를 본다.
 
 v5.0.0 개발 순서와 완료 기준은 [성장 경로 개선 마일스톤](docs/v5.0-milestones.md)에 정리한다.
-다음 판의 계획은 [v5.1.0](docs/v5.1-milestones.md)·[v5.2.0](docs/v5.2-milestones.md)(견고함)과
-[v6.0.0](docs/v6.0-milestones.md)(확장)에 있다.
+v5.1.0은 소속 scope가 없는 대화를 추적하고 그 검토가 소속을 정하게 했다. 다음 판의 계획은
+[v5.2.0](docs/v5.2-milestones.md)과 그리로 옮긴 [v5.1.0 계획](docs/v5.1-milestones.md)의 의미 품질
+평가·미룬 설계(견고함), [v6.0.0](docs/v6.0-milestones.md)(확장)에 있다.
 
 ## License
 

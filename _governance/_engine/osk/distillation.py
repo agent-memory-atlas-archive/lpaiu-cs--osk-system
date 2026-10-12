@@ -18,6 +18,9 @@ from pathlib import Path
 from . import contract, graph, raw, secrets, write
 from .core import ROOT, local_lock_path, posix_rel, resolve_in_root, sha256_bytes, sha256_file
 
+# 증류가 쓰는 자리 — Person은 소속 scope 없는 세션이 Person에 둘 것만 남길 때다(시행령 §3 9항 3호).
+_TARGETS = ("scope", "domain", "person")
+
 
 def _job_path(key: str) -> Path:
     if not isinstance(key, str) or not key.strip() or len(key) > 256:
@@ -107,7 +110,7 @@ def _hub(name: str, idx) -> dict:
     p = write._live_locate(name, idx)
     if p is None or not p.is_file() or not graph.is_hub(p):
         raise write.WriteError("distill.hub must name an existing hub")
-    if graph.space_of(p)[0] not in ("scope", "domain"):
+    if graph.space_of(p)[0] not in _TARGETS:
         raise write.WriteError("distillation cannot write protected or other spaces")
     node = contract.parse(p)
     return {"name": p.stem, "id": node.id, "path": posix_rel(p, ROOT),
@@ -172,7 +175,7 @@ def _retained_target(target: dict, idx) -> Path:
     if p is None or not p.is_file():
         raise write.WriteError("target missing; original request or review is required")
     if (tuple(p.relative_to(ROOT).parts[:2]) != tuple(Path(target["path"]).parts[:2])
-            or graph.space_of(p)[0] not in ("scope", "domain")):
+            or graph.space_of(p)[0] not in _TARGETS):
         raise write.WriteError("target crossed its top-level cluster; pending")
     body = contract.parse(p).body
     if not write._norm_body(body):
@@ -348,7 +351,7 @@ def discover(raw_refs: list[str], limit: int = 8, scan_limit: int = 256) -> dict
                         | {source["native"] for source in job["sources"] if source.get("native")}):
                     continue
                 target = resolve_in_root(job["target"]["path"])
-                if target is None or graph.space_of(target)[0] != "scope":
+                if target is None or graph.space_of(target)[0] not in ("scope", "person"):
                     continue
                 proof = _verify(job)
                 if (proof["status"] == "complete"
@@ -452,8 +455,8 @@ def _execute(operation: str, distill: dict, request: dict, *,
                 target_path = write._live_locate(request["name"], idx)
                 if target_path is None or not target_path.is_file():
                     raise write.WriteError("distillation target does not exist")
-                if graph.space_of(target_path)[0] not in ("scope", "domain"):
-                    raise write.WriteError("distillation target must be a Scope/Domain node")
+                if graph.space_of(target_path)[0] not in _TARGETS:
+                    raise write.WriteError("distillation target must be a Scope/Domain/Person node")
                 old = contract.parse(target_path)
                 selected_hash = sha256_file(target_path)
                 supplied_body = request.get("body")
@@ -476,8 +479,11 @@ def _execute(operation: str, distill: dict, request: dict, *,
                 raise write.WriteError("target changed before write; pending")
             if operation == "update" and write._norm_body(n.body) == write._norm_body(contract.parse(path).body):
                 raise write.WriteError("distillation requires a changed retained body")
-            if graph.space_of(path)[0] not in ("scope", "domain"):
-                raise write.WriteError("distillation target must be a Scope/Domain node")
+            if graph.space_of(path)[0] not in _TARGETS:
+                raise write.WriteError("distillation target must be a Scope/Domain/Person node")
+            if graph.space_of(path)[0] == "person" and not any(raw.is_person_record(s["path"]) for s in sources):
+                # Person 증류는 소속 scope 없는 세션이 Person에 둔 것뿐이다 — 그 라운드는 Person Space에 있다
+                raise write.WriteError("a Person node is distilled from rounds kept in Person Space (Bylaws §2 8)")
             if path.parent != resolve_in_root(hub["path"]).parent or path.stem == hub["name"]:
                 raise write.WriteError("target must be a knowledge node under the selected hub")
             if any(s["path"] in (posix_rel(path, ROOT), hub["path"]) for s in sources):

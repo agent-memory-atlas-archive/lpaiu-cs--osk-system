@@ -94,6 +94,10 @@ def _apply(root: Path, fetched: tuple[str, str | None] | None = None) -> tuple[s
         mlock.close()
 
 
+# 인용 기록이 있을 수 있는 Space 루트 — 옛 접두도 함께(Person은 소속 scope 없는 세션의 기록, Mechanism §9 5항)
+_RECORD_ROOTS = ("00_Scope", "= Scope", "Scope", "00_Person", "= Person", "Person")
+
+
 def _raw_boundary(root: Path, remote: str | None = None, *, base: str | None = None) -> list[str]:
     """Inspect changed records before commit/rebase; never repair source bytes here."""
     def git(args):
@@ -105,11 +109,11 @@ def _raw_boundary(root: Path, remote: str | None = None, *, base: str | None = N
     head = vault_sync._head(root, 10)
     if remote:
         paths = git(["diff", "--name-only", "-z", "--diff-filter=ACMRT",
-                     base or head or "4b825dc642cb6eb9a060e54bf8d69288fbee4904", remote, "--", "00_Scope", "= Scope", "Scope"])
+                     base or head or "4b825dc642cb6eb9a060e54bf8d69288fbee4904", remote, "--", *_RECORD_ROOTS])
     else:
-        paths = git(["ls-files", "--others", "--exclude-standard", "-z", "--", "00_Scope", "= Scope", "Scope"])
+        paths = git(["ls-files", "--others", "--exclude-standard", "-z", "--", *_RECORD_ROOTS])
         paths += git((["diff", "--name-only", "-z", "--diff-filter=ACMRT", head]
-                      if head else ["ls-files", "--cached", "-z"]) + ["--", "00_Scope", "= Scope", "Scope"])
+                      if head else ["ls-files", "--cached", "-z"]) + ["--", *_RECORD_ROOTS])
     errors = []
     for encoded in sorted(set(paths.split(b"\0")) - {b""}):
         path = encoded.decode("utf-8")

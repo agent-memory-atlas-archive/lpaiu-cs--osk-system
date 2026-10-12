@@ -45,6 +45,7 @@ A vault is one self-contained directory tree, normally a Git repository
 | `00_Scope/Workbench/` | the operational scope (table below) | in `transit/` only |
 | `00_Domain/<domain>/` | a domain | yes |
 | `00_Person/<facet>/` | a facet | yes |
+| `00_Person/_cited/` | cited records of sessions that kept only Person knowledge, without a scope (section 6.1) | no |
 | `_governance/` | the governing documents and `records/` | yes, special |
 | `_governance/_engine/` | the engine, sync tools and test suite | no |
 | `_sources/` | shared source material such as images and PDFs | no |
@@ -382,6 +383,7 @@ Every `*.jsonl` file under `00_Scope/Workbench/_ledger/` is a ledger
 | `pins.jsonl` | `pin`, `unpin` | `target` | not appended by the engine | §6 |
 | `growth.jsonl` | `plan`, `review`, `run`, `eviction_review`, `recheck_review` | `key` (reviews) | growth runner | none |
 | `rechecks.jsonl` | `complete` | (`node`, `target`) | node writes; session start | §4-1 |
+| `workspaces.jsonl` | `rule` | none | `workspaces.add` (an installing agent) | §6-2 6 |
 | `migration/events.jsonl` | `archive`, `move`, `transform`, `hold`, `drop` | none | not appended by the engine | §5 |
 | `signatures.jsonl` | preserved records | none | never appended | §3 9 |
 
@@ -441,10 +443,26 @@ repository name.
   landing scope.
 - A write in a bound session lands in its scope, and a request that names a
   different scope is refused. The first successful write of an unbound session
-  into a scope appends its `bind`. Rebinding is a new record. No MCP tool or CLI
-  command appends an `alias`.
+  into a scope appends its `bind`, unless the session runs in a one-off workspace
+  (below). Rebinding is a new record. No MCP tool or CLI command appends an
+  `alias`.
 - A key shaped like a one-off conversation id (a UUID with or without hyphens,
   or 32 hex digits) is refused before anything is written.
+- **One-off workspaces.** A folder that a harness creates for each conversation
+  or task (a Codex desktop chat folder, a Claude desktop scratch workspace, an
+  Antigravity playground) is judged by its path shape (Mechanism §6-2 6). Its key
+  is never bound, and an existing binding of that key is not followed: a write
+  names its landing, and that landing applies to the conversation only. The
+  judgment belongs to the conversation and is fixed when the conversation is
+  first captured; a write tool, which takes only a key, judges by the work folder
+  of the process it runs in. Git repositories are not judged. The engine has
+  rules for Windows; `workspaces.jsonl` adds `rule` records with `harness`, `os`
+  (`nt` or `posix`), `version` (the harness version the shape was checked on),
+  `root` (may use `~` and environment variables), `shape` (a regular expression
+  matched against the start of the path under the root, joined with `/`) and an
+  optional `note`. Ledger rules come before the engine's, newest first. A folder
+  under a root that no shape matches, or a harness whose major.minor version
+  differs from the rule's, is reported and still not bound.
 - **Keys from hooks.** Inside a Git repository, the key is the main
   repository's directory name: a worktree takes its main repository's name, and
   a submodule or bare repository uses its own name. Outside Git, the key is the
@@ -728,7 +746,11 @@ enters a record only when the MCP tool `cite_round` cites that turn
 
 - **Path.** `00_Scope/<scope>/_cited/.records/<record>.txt`. When
   `<record>.txt` would be longer than 255 bytes, the record is
-  `00_Scope/<scope>/_cited/.records/<record>/record.txt` (Mechanism §9 5).
+  `00_Scope/<scope>/_cited/.records/<record>/record.txt` (Mechanism §9 5). A
+  session that kept only Person knowledge, without a scope, keeps its record in
+  `00_Person/_cited/.records/` (Bylaws §3 9, §2 8). If that session later
+  belongs to a scope, its new rounds go to that scope's record, and the Person
+  record stays.
 - **Records in `_raw/`.** Records that older engines wrote under
   `00_Scope/<scope>/_raw/`, in the same two layouts or as
   `00_Scope/<scope>/_raw/<record>.md`, read as cited records of the same name.

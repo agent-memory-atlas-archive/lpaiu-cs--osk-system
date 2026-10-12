@@ -4,7 +4,7 @@
 
 Claude Code나 Codex는 쓰고 있지만 osk-system은 처음 설정하는 사람을 위한 따라하기
 안내서다. 빈 폴더에서 출발해 검증까지 마친 설정으로 끝난다. 마지막에는 에이전트가
-첫 기억을 쓰고, 그것을 다시 찾아 읽어 낸다. v5.0.0 릴리스 기준이다.
+첫 기억을 쓰고, 그것을 다시 찾아 읽어 낸다. v5.1.0 릴리스 기준이다.
 
 단계마다 더 자세한 내용은 운용 참고서인 [SETUP.md](SETUP.md)로 이어지는 링크를
 따라가면 된다.
@@ -131,7 +131,7 @@ scope 기억으로 남기고, 그 노드에 필요한 턴만 인용한다.
 
 `main` 브랜치가 아니라 릴리스 태그를 clone한다. `main`은 릴리스 사이에도 움직인다.
 갱신기는 파일을 릴리스와 대조하므로, 정확히 한 릴리스에서 출발해야 2단계에서 깨끗한
-기준선을 기록할 수 있다. `v5.0.0`은 적힌 그대로 쓰면 된다.
+기준선을 기록할 수 있다. `v5.1.0`은 적힌 그대로 쓰면 된다.
 [릴리스 페이지](https://github.com/lpaiu-cs/osk-system/releases)의 최신 태그를 써도
 되지만, 그때는 2단계에서도 같은 태그를 쓴다.
 
@@ -139,7 +139,7 @@ vault를 담을 폴더(Windows라면 `C:/osk` 등, 먼저 만들어 둔다)에�
 OS에서나 같은 명령이다.
 
 ```bash
-git clone --branch v5.0.0 https://github.com/lpaiu-cs/osk-system.git my-osk-vault
+git clone --branch v5.1.0 https://github.com/lpaiu-cs/osk-system.git my-osk-vault
 cd my-osk-vault
 git switch -c main
 ```
@@ -205,13 +205,13 @@ $env:PYTHONPATH = "_governance\_engine"
 macOS/Linux:
 
 ```bash
-.venv/bin/python -m osk.update --to v5.0.0 --apply
+.venv/bin/python -m osk.update --to v5.1.0 --apply
 ```
 
 Windows (PowerShell):
 
 ```powershell
-.venv\Scripts\python.exe -m osk.update --to v5.0.0 --apply
+.venv\Scripts\python.exe -m osk.update --to v5.1.0 --apply
 ```
 
 첫 실행은 어떤 파일도 바꾸지 않는다. 계획을 출력한 뒤 종료코드 2와
@@ -252,7 +252,7 @@ git push
 ```
 
 **확인:** `.venv/bin/python -m osk.update`의 `current`가 선택한 버전을 가리킨다
-(위 예제에서는 `v5.0.0`).
+(위 예제에서는 `v5.1.0`).
 Windows에서는 `.venv\Scripts\python.exe -m osk.update`를 쓴다. `git status`는
 깨끗하다. `osk.cli status`가 `"protected_regions": {"_governance": "clean"}`을
 보여 준다.
@@ -446,11 +446,10 @@ fork 검토를 켜지 않았다면
 `[osk 검토 경고 — subscription fork CLI is not configured. …]`도 함께 나온다.
 검토가 이 세션 안에서 9번째와 15번째 메시지에 이뤄진다는 뜻이며, 정상이다.
 
-scope가 결속되기 전에는 이 대화의 턴을 추적하지 않는다 — 인용해 넣을 scope가 없기
-때문이다. 그래서 두 번째 메시지부터는 메시지마다 훅 문구에 포착 대기 한 줄
-(`[osk 포착 대기 — WriteError: 착지 미정 …]`, fork 검토를 켰다면
-`[osk 백그라운드 검토 대기 — …]`)이 붙는다. 실제로 검토할 때가 된 것은 아니다.
-아래 2번을 마치면 멈춘다. 검토 경고는 fork 검토를 설정할 때까지 남는다.
+scope가 결속되기 전에도 이 대화의 턴은 추적된다 — 추적은 vault에 아무것도 쓰지 않는다.
+남길 것이 나오면 대화 검토가 소속 scope를 정하고(시행령 §3 9항), 그 대화의 첫 인용이 착지를
+고정한다. 아래 2번에서 scope를 만들면 그 뒤로는 이 저장소의 쓰기가 그 scope에 착지한다.
+검토 경고는 fork 검토를 설정할 때까지 남는다.
 
 1. **둘러보기.** 프롬프트:
 
@@ -472,8 +471,10 @@ scope가 결속되기 전에는 이 대화의 턴을 추적하지 않는다 — 
 
    > `00_Scope/my-app`는 아직 없는 군집이라 … 새 군집을 만든다
 
-   새 군집을 만드는 요청이니 사용자에게 확인한 뒤, 한 시간 안에 같은 요청을 다시
-   보내라는 뜻이다. 에이전트가 물어볼 것이다. 이렇게 답한다.
+   새 최상위 군집을 만드는 요청이니 그 신설이 규칙이 맡긴 것인지 확인한 뒤, 한 시간
+   안에 같은 요청을 다시 보내라는 뜻이다. 노드를 써서 이 세션의 소속 scope를 여는 것은
+   허용되므로(시행령 §3 9항) 에이전트가 같은 요청을 다시 보낸다. 에이전트가 대신 물어보면
+   이렇게 답한다.
 
    ```text
    Yes, create it. Send the same request again.
@@ -567,7 +568,7 @@ scope가 결속되기 전에는 이 대화의 턴을 추적하지 않는다 — 
 | `[osk 검토 경고 — <이유>. …]` | 적힌 이유로 백그라운드 fork 검토가 돌지 않는다. 검토는 이 세션 안에서 user 턴 9와 15에 이뤄진다. fork 검토를 설정하지 않았다면 정상이다. |
 | `[osk 대화 검토 — …]` | fork 검토가 켜져 있다. 성공한 최종 답변 9회마다 한 번씩 돈다. |
 | `[osk 케이던스 — user 턴 N]` | 검토할 때가 됐다. 9턴에는 에이전트가 다음 도구 호출에 검토를 함께 싣는다. 15턴에는 한 턴을 통째로 검토에 써도 된다. |
-| `[osk 포착 대기 — <오류>. …]` | 이 대화의 턴 추적이 막혔다. scope가 결속되기 전이면 정상이다(5단계). 대기와 계수는 유지되고 9·15턴에는 평소대로 검토 문구가 실린다. 결속 뒤에도 계속되면 CLI `status`의 `capture_blocked`를 본다. |
+| `[osk 포착 대기 — <오류>. …]` | 이 대화의 턴 추적이 막혔다. 대기와 계수는 유지되고 9·15턴에는 평소대로 검토 문구가 실린다. 계속되면 CLI `status`의 `capture_blocked`를 본다. |
 | `[osk 대화별 통합 대기 — …]` | 이 대화의 검토 대기열과 에이전트에게 주는 지시. |
 | `[osk 참조·조직 검토]` | 이 scope 노드들의 링크와 허브를 정돈하는 작업. |
 | `[osk 정돈 — …]`, `[osk 정돈이 밀렸다 — …]` | 처분을 기다리는 퇴출된 scope 기억 줄. `밀렸다`는 가장 오래된 항목이 14일을 넘겼다는 뜻이다. |
@@ -893,7 +894,7 @@ v4.1.0 이상에서는 `python _governance/_engine/scripts/setup.py --apply --fo
 릴리스 페이지를 지켜볼 필요는 없다. 세션 시작 훅과 MCP `overview`가 하루에 한 번
 정본 저장소에 릴리스 태그를 묻는다(`git ls-remote` — vault의 내용은 보내지 않는다).
 새 릴리스가 있으면 Claude Code·Codex 화면에
-`osk-system 새 릴리스 v5.1.0 (이 vault는 v5.0.0) — …` 같은 경고가 기기마다 하루 한 번
+`osk-system 새 릴리스 v5.2.0 (이 vault는 v5.1.0) — …` 같은 경고가 기기마다 하루 한 번
 뜬다. 경고 끝에 그 판의 릴리스 노트 주소가 붙는다. 에이전트에게 **"osk 업데이트해 줘"**라고 요청하면 에이전트가 아래 절차를 함께
 밟는다 — 변경집합을 보여 주고 사용자의 승인을 기다린다. 확인은 백그라운드에서 돌므로
 알림은 확인한 다음 세션부터 보인다. 지금 확인하려면 `osk.update --check`를 실행한다
@@ -973,13 +974,13 @@ Windows (PowerShell):
 | Windows: `Asia/Seoul`에 대한 `ZoneInfoNotFoundError` | venv에 `tzdata` 패키지가 없다. 의존성을 그 venv에 다시 설치한다. |
 | `claude mcp list`에 *Connected*가 없거나, Codex가 서버를 시작하지 못한다 | 등록한 명령이 vault의 `.venv` Python(Windows는 `.venv/Scripts/python.exe`)을 써야 한다. 같은 명령을 터미널에서 직접 실행해 오류를 본다. 정상 서버는 아무것도 출력하지 않고 클라이언트를 기다린다. Ctrl+C로 멈춘다. |
 | 세션 시작에 osk 문구가 없다 | Claude Code는 시작할 때만 훅을 읽으므로 새 세션을 열고 `/hooks`를 확인한다. Codex에서는 `/hooks`에서 항목을 신뢰한다. 두 하네스 모두 MCP 등록만으로는 훅이 설치되지 않으며, 훅 명령마다 vault의 `.venv` Python을 써야 한다. 3b의 손 실행 시험을 돌려 본다. `doctor`는 등록됐지만 이 기기에서 한 번도 불리지 않은 훅을 가려 준다. |
-| 훅 문구에 `착지 미정`이나 `scope 결속이 없다`가 되풀이된다 | 이 저장소의 키가 아직 결속되지 않았다. scope를 만들거나 고른다(5단계 2번). |
+| 훅 문구에 `scope 결속이 없다`가 되풀이된다 | 이 저장소의 키가 아직 결속되지 않았다. scope를 만들거나 고른다(5단계 2번). |
 
 **에이전트가 전하는 쓰기 거부**
 
 | 거부 문구 | 뜻과 해결 |
 |---|---|
-| `아직 없는 군집이라 … 새 군집을 만든다` | 새 최상위 군집에는 한 번의 확인이 필요하다. 확인한 뒤 에이전트가 한 시간 안에 같은 요청을 다시 보내게 한다. |
+| `아직 없는 군집이라 … 새 군집을 만든다` | 새 최상위 군집에는 한 번의 확인이 필요하다. 세션의 소속 scope를 열거나 정기 실행이 domain을 만들 때는 에이전트가 한 시간 안에 같은 요청을 다시 보낸다. 노드를 옮겨 scope를 여는 것 등 그 밖의 최상위 군집은 먼저 사용자의 허락을 받는다. |
 | `착지가 정해지지 않았다 — space를 지정하라` | 세션이 결속되지 않았는데 쓰기에 `space`가 없다. 한 번은 `session`과 함께 `space="00_Scope/<이름>"`을 넘긴다. |
 | `에 결속돼 있다` | 세션이 다른 scope에 결속돼 있다. `space`를 빼거나, 여러 프로젝트에 걸친 지식이라면 `00_Domain/`에 쓴다. |
 | `1회용 대화 id` | 대화 UUID를 세션 키로 썼다. 훅이 출력한 키를 쓴다. |

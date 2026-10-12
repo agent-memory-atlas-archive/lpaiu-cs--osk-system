@@ -108,6 +108,21 @@ python _governance/_engine/scripts/setup.py --apply [--fork] [--schedule claude]
 It applies and reports `steps`, `backups` and `human`. If it asks for
 approval again, the plan changed in between: show the new plan and ask again.
 
+Then check the one-off workspaces. Some harnesses open each conversation or
+task in a new folder that they create, such as Codex desktop's dated chat
+folders. osk does not bind the session key of such a folder. The engine has
+rules for the harnesses in [SETUP](SETUP.md#일회성-작업-공간) (Korean), checked
+on Windows. For a harness the user works in that has no rule on this OS, find
+the folder it creates under its root, and add a rule from the vault root:
+
+```bash
+PYTHONPATH=_governance/_engine .venv/bin/python -c "from osk import workspaces; print(workspaces.add('<harness>', '<root folder>', r'<regex of the path under the root>', '<harness version>', '<note>'))"
+```
+
+On Windows, use `.venv\Scripts\python.exe`. The root may use `~` and
+environment variables. The regex matches the start of the path under the root,
+joined with forward slashes.
+
 ## 7. Hand over the human steps
 
 Tell the user each line of `human`, for example trusting the three osk hooks in

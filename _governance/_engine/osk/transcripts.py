@@ -197,6 +197,25 @@ def _native_files(path: str, harness: str, sid: str) -> list[tuple[Path, int | N
         current, limit = matches.pop(), base["end_byte_offset"]
 
 
+def workspace(path: str, harness: str) -> dict | None:
+    """이 대화의 작업 폴더와 하네스 판본 — 일회성 작업 공간의 판별에만 쓴다(Mechanism §6-2 6항).
+    앞쪽 행만 읽는다. Claude는 행마다, Codex는 첫 `session_meta`가 담는다. 모르면 None이다."""
+    try:
+        with open(path, "rb") as f:
+            for n, line in enumerate(f):
+                if n >= 50:
+                    break
+                row = json.loads(line)
+                if harness == "claude" and isinstance(row, dict) and isinstance(row.get("cwd"), str):
+                    return {"cwd": row["cwd"], "version": row.get("version")}
+                if harness == "codex" and isinstance(row, dict) and row.get("type") == "session_meta":
+                    meta = row.get("payload") or {}
+                    return {"cwd": meta.get("cwd"), "version": meta.get("cli_version")}
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 def native_fingerprint(path: str, harness: str, sid: str) -> dict:
     pages = _native_files(path, harness, sid)
     stat = pages[-1][0].stat()

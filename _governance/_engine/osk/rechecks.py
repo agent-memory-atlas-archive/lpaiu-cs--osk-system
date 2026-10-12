@@ -405,12 +405,14 @@ def change(nid: str, key: str, ref: str, idx) -> dict:
         side, path, want, body = "target", hit[0], m.get("target_state"), graph.is_node_home(hit[1])
     else:
         side, path, want, heading, body = "node", node[0], m.get("node_state"), "", True
-    # 상태를 잰 그 범위끼리 비교한다(`state`) — 요약·배선의 변경은 변경분이 아니다
+    # 상태를 잰 그 범위끼리 비교한다(`state`) — 요약·배선의 변경은 변경분이 아니다. 노드 본문은
+    # 지금 정의(근거 절 제외)로도, 그 전 정의(본문 전체)로도 적혀 있을 수 있다.
     cut = ((lambda b: heading_range(b, heading)) if heading else
            (lambda b: b[contract.body_offset(b):]) if body else (lambda b: b))
-    for old in _versions(posix_rel(path, ROOT), str(m.get("at", ""))):
-        old = cut(old)
-        if old is not None and sha256_bytes(old) == want:
+    for version in _versions(posix_rel(path, ROOT), str(m.get("at", ""))):
+        old = cut(version)
+        if old is not None and want is not None and want in (
+                sha256_bytes(old), state(version) if body and not heading else None):
             new = cut(path.read_bytes())
             diff = None if new is None else _diff(old, new)
             if diff is not None:
@@ -438,22 +440,70 @@ def ensure_baseline(idx=None, *, carry: bool = False) -> int:
 
 
 def _carry(idx) -> int:
-    """근거 절을 빼기 전의 정의로 잰 기록을, 내용이 그대로인 쌍만 지금 정의로 다시
-    적는다(`unchanged`, 사유 `이어받음`). 적지 않으면 그 근거 절을 처음 고칠 때 그
-    쌍이 한 번 후보가 된다."""
+    """근거 절을 빼기 전의 정의로 잰 기록을, 내용이 그대로인 동안 지금 정의로 다시 적는다
+    (사유 `이어받음`, Mechanism §4-1 2항). 노드의 지금 판이 재검토의 `updated`로 만들어졌으면
+    이어 적는 행은 `updated`(cascade의 근거), 아니면 `unchanged`다. 그 사실이 옛 정의로만
+    남았으면 — 이미 `unchanged`로 이어 적은 노드(v5.0.x)나, 근거가 다시 바뀌어 이어 적을 쌍이
+    없는 노드도 — 한 행을 더 적어 지금 판으로 옮긴다. 사용자 검토에 올린 기록도 잇는다. 적지
+    않으면 그 근거 절을 처음 고칠 때 완료·cascade·사용자 검토가 풀린다(#177)."""
     recs, ok = _read()
     if not ok or not recs:
         return 0
-    latest, lc, rows = _latest(recs), {}, []
+    latest, lc, rows, held = _latest(recs), {}, [], {}
+    updated = [r for r in recs if r.get("kind") == "complete" and r.get("result") == "updated"]
+    revised = {(r.get("node"), r.get("node_state")) for r in updated}
+    nodes = {n for n, _ in revised}
     for _name, nid, ns, ps, _kind in _citing(idx, {}):
+        # 그 노드의 지금 판이 재검토의 updated로 만들어졌는가 — 옛 정의로만 적혔으면 지금 정의로 옮긴다
+        legacy = _legacy(idx, nid, lc) if nid in nodes else None
+        made = (nid, ns) in revised or (nid, legacy) in revised
+        owed = made and (nid, ns) not in revised
         for key, (ts, _ref) in ps.items():
+            if ts is None:
+                continue
             maxima = latest.get((nid, key), [])
-            if (ts is not None and _verdict(maxima, ns, ts) is not None
-                    and _carried(maxima, idx, nid, ns, key, ts, lc)):
-                rows.append(_row(nid, ns, key, ts, "unchanged", CARRIED))
+            done = _verdict(maxima, ns, ts) is None
+            if (owed and done) or (not done and _carried(maxima, idx, nid, ns, key, ts, lc)):
+                rows.append(_row(nid, ns, key, ts, "updated" if made else "unchanged", CARRIED))
+                owed = False            # 한 행이면 그 판이 cascade의 근거가 된다
+            elif not done:
+                held[f"recheck:{nid}:{key}"] = (nid, key, ns, ts)
+        if owed:
+            # 완료도 이어 적기도 아닌 쌍뿐이다(근거가 그 뒤 다시 바뀌었다). 그 updated 기록을 그때의
+            # 근거 상태 그대로 다시 적어 판의 사실만 옮긴다 — 근거가 달라 그 쌍은 후보로 남는다.
+            old = next((r for r in reversed(updated) if r.get("node") == nid and r.get("node_state") == legacy), None)
+            if old is not None:
+                rows.append(_row(nid, ns, old.get("target"), old.get("target_state"), "updated", CARRIED))
     if rows:
         ledger_extend(RECHECKS, rows)
-    return len(rows)
+    return len(rows) + _carry_reports(idx, held, lc)
+
+
+def _carry_reports(idx, held: dict, cache: dict) -> int:
+    """후보로 남은 쌍의 사용자 검토 기록(`recheck_review`, `escalated`)을 내용이 그대로인 동안
+    지금 정의의 두 상태로 다시 적는다 — 수정안과 이유는 그대로다."""
+    if not held:
+        return 0
+    try:
+        from . import growth
+        rows = growth._records()
+    except Exception:
+        return 0
+    keys = {r.get("key") for r in rows if r.get("kind") == "recheck_review"} & held.keys()
+    if not keys:
+        return 0
+    par, out = effective_parents(rows), []
+    for k in sorted(keys):
+        nid, key, ns, ts = held[k]
+        r = growth._latest(rows, k, "key", par) or {}
+        was = (r.get("node_state"), r.get("target_state"))
+        if (r.get("kind") == "recheck_review" and r.get("outcome") == "escalated" and was != (ns, ts)
+                and _alike(idx, nid, key, ns, ts, *was, cache)):
+            out.append({**{f: v for f, v in r.items() if f not in ("rid", "parents", "at")},
+                        "node_state": ns, "target_state": ts})
+    if out:
+        ledger_extend(growth.LEDGER, out)
+    return len(out)
 
 
 def _presented(nid: str, key: str) -> str | None:

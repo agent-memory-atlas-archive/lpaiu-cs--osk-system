@@ -138,7 +138,8 @@ def _latest(rows: list[dict], value: str, field: str, par=None) -> dict | None:
     """한 항목의 지금 보고. 앞 선택(manifest)을 인과로 이은 선택이 있으면 앞 선택의 보고는
     기록으로만 남는다 — 옛 선택의 보고가 늦게 붙어 인과 극대가 되어도 새 선택의 보고를
     되돌리지 않는다. 서로 잇지 않은 선택(동기화 전의 두 기기)은 함께 남고, 그 보고가
-    갈리면 정하지 않는다(Mechanism §3 1항). 같은 선택 안에서는 인과상 나중 기록이 정한다.
+    갈리면 정하지 않는다(Mechanism §3 1항). 같은 보고를 두 기기가 따로 적었으면(이어 적기
+    등) 갈린 것이 아니므로 하나로 본다. 같은 선택 안에서는 인과상 나중 기록이 정한다.
     `par`는 같은 `rows`의 `effective_parents`다 — 여러 항목을 판정할 때 한 번만 잰다."""
     par = core.effective_parents(rows) if par is None else par
     plans = {r["manifest"] for r in rows
@@ -147,7 +148,8 @@ def _latest(rows: list[dict], value: str, field: str, par=None) -> dict | None:
     kept = {m for m in plans if not any(m in anc[o] for o in plans if o != m)}
     top = core.causal_maxima(rows, value, par, field, candidate=(
         (lambda r: r.get("manifest") in kept) if plans else None))
-    return top[0] if len(top) == 1 else None
+    said = lambda r: {k: v for k, v in r.items() if k not in ("rid", "parents", "at")}
+    return top[0] if top and all(said(r) == said(top[0]) for r in top) else None
 
 
 def _completed(key: str, rows: list[dict], idx: graph.Index, par=None) -> dict | None:
@@ -482,7 +484,8 @@ def prompt(planned: dict | None = None, limit: int = 3) -> str:
         "Do not run the osk CLI or "
         "shell commands for osk work: a sandboxed runner cannot execute them, and every attempt "
         "spends the time budget. Record each decision in the final packet below; the runner "
-        "applies it after you finish. For scope_jobs use each job's original session, "
+        "applies it after you finish. For scope_jobs use each job's original session (none for a job "
+        "whose prompt marks a one-off workspace), "
         "pending_refs and exact through snapshot; an empty shared memory or a short conversation "
         "is not a reason to omit that review. Keep unrelated source conversations distinct. "
         "Review only the selected Domain candidates and organization_jobs at their work_order positions. "
@@ -518,7 +521,12 @@ def prompt(planned: dict | None = None, limit: int = 3) -> str:
         "carries hub_tree, its scope's hubs with their direct node counts: descend from the top hub "
         "to the deepest hub that covers the topic and link the node there. That cluster path is "
         "create_node.space and its last segment is distill.hub. Hub differentiation belongs to the "
-        "organization review: do not open sub-clusters; propose one in the review reason if needed.\n"
+        "organization review: do not open sub-clusters; propose one in the review reason if needed. "
+        "A Scope job without hub_tree has no scope yet: follow its prompt's membership order "
+        "(Bylaws §3 9). Close it as no_value when nothing is worth keeping; otherwise its first "
+        "cite_round with space fixes its landing, and Person-only knowledge goes to Person Space "
+        f"with its rounds cited under space `{core.PERSON}` — only under the facet's active statute: "
+        "read its `<facet>-law` node first, and defer if none is active (Bylaws §4 8).\n"
         # 두 경우를 한 문장에 담았더니 정기 실행 작업자가 자신을 Stop fork로 여겨 읽지 않고
         # 판정했다(v5.0.0 운영 관측). 엔진은 어느 쪽인지 알므로 그 경우의 문장만 싣는다.
         + ("Scope jobs: pending_refs starting with native: are original turns of the conversation "
@@ -589,10 +597,12 @@ def prompt(planned: dict | None = None, limit: int = 3) -> str:
         "Retain useful shared knowledge in the ordinary vault. Do not blanket-isolate it. "
         "Do not invent value or force unrelated sources into one claim. Use no_value with "
         "a concrete reason when there is no reusable synthesis, or deferred with the missing "
-        "evidence/permission and next action. User-only new-cluster confirmation still applies. "
-        "Do not repeat a new-cluster refusal as a substitute for actual user consent. "
-        "If the needed cluster has not been approved, record deferred with its proposed "
-        "cluster and node title for the user briefing.\n"
+        "evidence/permission and next action. A write refused as a new top-level cluster may be "
+        "sent again only to open the scope an unlanded conversation belongs to (Bylaws §3 9) or a "
+        "domain this run forms (Bylaws §3 1, named in the review reason as a report). Any other "
+        "new top-level cluster, such as a scope opened by moving nodes, needs the user's consent: "
+        "do not resend it; record deferred with its proposed cluster and node title for the user "
+        "briefing.\n"
         "For preservation use create_node/update_node with distill={key: candidate.distill_key, "
         "sources: [{ref: source.id, hash: source.hash}, ...], hub: existing selected hub name}. "
         "Cite only the selected sources that actually support the synthesis, with their exact "
@@ -1172,7 +1182,9 @@ def run(command: list[str], limit: int = 3, timeout: int = 600, *,
                 planned["engine_rev"] = core.epoch.loaded()
                 if scope_job is not None and scope_job.get("session"):
                     from . import write
-                    scope = write.resolve_session(scope_job["session"])
+                    # 일회성 작업 공간의 대화는 그 키의 결속을 따르지 않는다(Mechanism §6-2 6항)
+                    scope = (None if (scope_job.get("workspace") or {}).get("one_off")
+                             else write.resolve_session(scope_job["session"]))
                     planned["work_context"] = "stop:" + (scope or scope_job["session"])
                     planned["organization_jobs"] = organization.pending([scope], limit=1) if scope else []
                     # 정기 실행이 없으면 이 scope의 재검토를 fork가 맡는다.
