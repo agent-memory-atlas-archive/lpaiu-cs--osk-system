@@ -22,22 +22,22 @@ records, and there is nothing to migrate.
   more.
 - **`cite_round` takes `space`.** A conversation without a scope lands where its
   first citation names `00_Scope/<name>`. A conversation that keeps only what
-  belongs to Person cites with `00_Person`, into `00_Person/_cited/`. If an MCP
-  client's settings pin the tool's arguments, update them.
+  belongs to Person cites with `00_Person`, into `00_Person/_cited/`, and writes
+  Person nodes only under the facet's active statute.
 - **One-off workspaces do not bind their session key.** A session opened in a
   Codex desktop chat folder, a Claude desktop scratch workspace or an
   Antigravity playground does not follow its key's binding, even an existing
-  one. Give `space` on each write in such a conversation. The engine's rules
-  were checked on Windows; for another OS or harness, add rules as described in
-  [SETUP](SETUP.md) (Korean), "일회성 작업 공간".
-- **Recheck marks carried from v4.1.8 hold.** The carry at session start and in
+  one. Give `space` on each write in such a conversation, and no `session`. The
+  engine's rules apply only on Windows; for another OS or harness, add rules as
+  described in [SETUP](SETUP.md) (Korean), "일회성 작업 공간".
+- **Recheck marks recorded before v5.0 (v4.x) hold.** The carry at session start and in
   scheduled runs now also rewrites, in the current definition, that a version was
   made by a recheck (`cascade`) and that a correction waits for your review.
   Editing only a `## 근거` section no longer releases either mark.
-- **Update every device together.** A v5.0 engine reads what v5.1 writes, but it
-  binds the keys of one-off workspaces and does not track conversations without a
-  scope. If your vault committed `.osk/`, first read the section below on vaults that
-  committed `.osk/`.
+- **Update every device together.** A v5.0 engine reads what v5.1 writes, except
+  the records in `00_Person/_cited/`, which it does not read as cited records (Person
+  nodes that cite them show dangling references there). It also binds the keys of
+  one-off workspaces and does not track conversations without a scope.
 - **Ratification.** This release ratifies the amendments to Constitution
   Article 6 (8), Bylaws §2 8, §3 1 and §3 9, and Mechanism §1, §4-1 2, §6-2 3,
   §6-2 6, §9 5 and §9-4 3. Their reasons are in #179 and #177.

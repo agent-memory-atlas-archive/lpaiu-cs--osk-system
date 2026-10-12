@@ -281,12 +281,14 @@ def _drive_content(cfg: dict) -> dict:
         new_cluster(title="W1", summary="Matrix work scope hub",
                     body="Work scope of the upgrade matrix. [[Alpha]] [[Beta]]",
                     drafter=DRAFTER, session=key, space=f"{S}/W1")
-        raw1 = ok("append_raw", key, "matrix-log", "How do we keep vaults alive?",
-                  "Update them with their own updater and check everything.")
-        out["round1"] = raw1["round_ref"]
+        # From v5.0 an engine stores no dialogue on its own: it cites a turn once one exists (phase B).
+        raw1 = (ok("append_raw", key, "matrix-log", "How do we keep vaults alive?",
+                   "Update them with their own updater and check everything.")
+                if hasattr(m, "append_raw") else None)
+        out["round1"] = raw1 and raw1["round_ref"]
         ok("create_node", title="Alpha", summary="Alpha keeps vaults alive",
            body="Alpha: an update must keep every vault usable. See [[Beta]].",
-           drafter=DRAFTER, session=key, edges={"derived-from": raw1["round_ref"]})
+           drafter=DRAFTER, session=key, edges={"derived-from": raw1["round_ref"]} if raw1 else None)
         ok("create_node", title="Beta", summary="Beta follows Alpha",
            body="Beta follows [[Alpha]] with a concrete check.",
            drafter=DRAFTER, session=key, edges={"derived-from": "Alpha"})
@@ -353,8 +355,10 @@ def _drive_content(cfg: dict) -> dict:
            body="Zeta belongs to [[W1]]: keep vaults working.", drafter=DRAFTER, session=key,
            edges={"derived-from": "Alpha"}, settle=ev["evicted"])
         ok("update_node", "W1", old_text="[[Beta]]", new_text="[[Beta]] [[Zeta]]")
-        raw2 = ok("append_raw", key, "matrix-log", "And after an update?",
-                  "The same checks, with the new engine.")
+        raw2 = (ok("append_raw", key, "matrix-log", "And after an update?",
+                   "The same checks, with the new engine.")
+                if hasattr(m, "append_raw") else
+                ok("cite_round", f"claude/{SID}", quote="matrix question 1", note="matrix answer 1"))
         out["round2"] = raw2["round_ref"]
         overflow()
         ok("scope_memory", key, edits=[{"old_text": "\n- Scratch note to evict.", "new_text": ""}])
@@ -817,7 +821,7 @@ def run_cell(up: Upstream, cand: str, work: Path, start: str, layout: str) -> di
 
         names = ["W1", "Alpha", "Beta", "Zeta", "Topic", "Delta", "Epsilon", "Pat", "Topic2"]
         mc = _drive(vault, "mcp", {"key": KEY, "names": names, "space": f"{S}/W1",
-                                   "rounds": [a["round1"], b["round2"]],
+                                   "rounds": [r for r in (a["round1"], b["round2"]) if r],
                                    "legacy": a["legacy"]})
         # v4 enforces Mechanism §1 4항: `_` directories are not node places. The files
         # stay byte-identical (the data check above); the release notes carry the move.
