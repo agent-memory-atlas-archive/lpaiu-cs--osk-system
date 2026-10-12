@@ -11618,20 +11618,23 @@ def test_sync_git_unknown_is_not_absent():
             skip("BELOW_NORMAL로 뜬 데몬의 git 등급", "Windows 우선순위 등급")
             return
         # 굶은 채 import하면 수트가 분 단위로 멈추므로, import 뒤에 등급을 낮춘다.
-        code = ("import ctypes, sys, vault_sync, sync_daemon\n"
-                "k32, me = ctypes.windll.kernel32, ctypes.c_void_p(-1)\n"
-                "k32.SetPriorityClass(me, 0x4000)\n"
-                "seen, real = [], vault_sync._git\n"
-                "def spy(*a, **k):\n"
-                "    seen.append(k32.GetPriorityClass(me))\n"
-                "    return real(*a, **k)\n"
-                "vault_sync._git = spy\n"
+        # 등급은 데몬 자신이 아니라 _git이 띄운 git 프로세스에서 읽는다.
+        code = ("import ctypes, subprocess, sys, vault_sync, sync_daemon\n"
+                "k32 = ctypes.windll.kernel32\n"
+                "k32.SetPriorityClass(ctypes.c_void_p(-1), 0x4000)\n"
+                "seen = []\n"
+                "class Spy(subprocess.Popen):\n"
+                "    def __init__(self, *a, **k):\n"
+                "        super().__init__(*a, **k)\n"
+                "        seen.append(k32.GetPriorityClass(ctypes.c_void_p(int(self._handle))))\n"
+                "subprocess.Popen = Spy\n"
                 "sys.argv = ['sync_daemon.py', '--once']\n"
                 "sync_daemon.main()\n"
                 "print(sorted(set(seen)))\n")
         r = subprocess.run([sys.executable, "-c", code], cwd=ENGINE, capture_output=True,
-                           text=True, timeout=120,
-                           env=dict(os.environ, SYNC_ENABLED="1", OSK_VAULT_ROOT=str(plain)))
+                           encoding="utf-8", errors="replace", timeout=120,
+                           env=dict(os.environ, SYNC_ENABLED="1", OSK_VAULT_ROOT=str(plain),
+                                    PYTHONIOENCODING="utf-8"))
         check("BELOW_NORMAL로 뜬 데몬도 git을 보통 등급(0x20)으로 띄운다",
               r.returncode == 0 and "[32]" in r.stdout, (r.returncode, r.stdout, r.stderr[-300:]))
     finally:

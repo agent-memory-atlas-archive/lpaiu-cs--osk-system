@@ -210,16 +210,20 @@ def _normal_priority() -> None:
     # ponytail: CPU 등급만 올린다 — 함께 낮게 물려받는 I/O(1)·메모리(2) 우선순위는 이
     # 기기(NVMe·여유 RAM)에서 무영향으로 실측됐다. 디스크·메모리 경합에서 굶으면 함께 올린다.
     if k32.GetPriorityClass(me) in (0x40, 0x4000):           # IDLE, BELOW_NORMAL
-        k32.SetPriorityClass(me, 0x20)                       # NORMAL — 자식 git도 따른다
+        if not k32.SetPriorityClass(me, 0x20):               # NORMAL — 자식 git도 따른다
+            raise ctypes.WinError()
 
 
 def main():
-    _normal_priority()
     if sys.stderr is None:
         # 콘솔 없이 떴다(Windows 작업의 `pythonw.exe`) — 알림을 버리지 않고 기기 로컬 로그에
         # 남긴다. 추적 트리 밖이라 데몬 자신의 `git add -A`가 싣지 않는다.
         sys.stdout = sys.stderr = open(_lock_path(ROOT, "osk-sync-daemon.log"), "a",
                                        encoding="utf-8", buffering=1)
+    try:
+        _normal_priority()
+    except Exception as e:      # 못 올려도 동기화는 돈다 — 굶을 때 느릴 뿐이다.
+        print(f"우선순위 조정 실패(받은 등급으로 계속): {e}", file=sys.stderr)
     ap = argparse.ArgumentParser()
     ap.add_argument("--interval", type=int, default=900, help="초 (기본 15분)")
     ap.add_argument("--once", action="store_true")
@@ -234,7 +238,10 @@ def main():
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
     if a.once:
-        print(once())
+        try:
+            print(once())
+        except Exception as e:  # 루프와 같이 git이 답하지 못한 것을 traceback 없이 알린다.
+            sys.exit(f"sync 실패: {e}")
         return
     # 데몬은 pull로 **엔진 자신을 받아온다** — 그 순간 자기가 낡는다. 이 자리는
     # 알리기만 하고 멈추지 않는다: 데몬이 하는 일은 git 전송이지 노드 쓰기가

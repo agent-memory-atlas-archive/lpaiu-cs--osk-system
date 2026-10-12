@@ -44,9 +44,9 @@ def is_git_repo(vault_root, timeout=10) -> bool:
     디렉터리도 통과시켜, OSK_VAULT_ROOT를 잘못 잡으면 상위 저장소 전체를
     커밋·push하게 된다.
 
-    거짓은 git이 "저장소가 아니다"라고 답했을 때뿐이다. timeout·git 실패는 답이
-    아니므로 그대로 올린다 — 거짓으로 접으면 굶은 데몬의 timeout이 매 주기
-    "git 저장소 아님"으로 둔갑해 원인이 가려진다(2026-10-12 실측)."""
+    거짓은 git이 "저장소가 아니다"라고 답했거나, 답한 최상위가 vault_root가 아닐
+    때뿐이다. timeout·git 실패는 답이 아니므로 그대로 올린다 — 거짓으로 접으면 굶은
+    데몬의 timeout이 매 주기 "git 저장소 아님"으로 둔갑해 원인이 가려진다(2026-10-12 실측)."""
     r = _git(vault_root, ["rev-parse", "--show-toplevel"], timeout)
     if r.returncode != 0:
         if "not a git repository" in r.stderr:
