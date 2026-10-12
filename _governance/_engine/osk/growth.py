@@ -138,7 +138,8 @@ def _latest(rows: list[dict], value: str, field: str, par=None) -> dict | None:
     """한 항목의 지금 보고. 앞 선택(manifest)을 인과로 이은 선택이 있으면 앞 선택의 보고는
     기록으로만 남는다 — 옛 선택의 보고가 늦게 붙어 인과 극대가 되어도 새 선택의 보고를
     되돌리지 않는다. 서로 잇지 않은 선택(동기화 전의 두 기기)은 함께 남고, 그 보고가
-    갈리면 정하지 않는다(Mechanism §3 1항). 같은 선택 안에서는 인과상 나중 기록이 정한다.
+    갈리면 정하지 않는다(Mechanism §3 1항). 같은 보고를 두 기기가 따로 적었으면(이어 적기
+    등) 갈린 것이 아니므로 하나로 본다. 같은 선택 안에서는 인과상 나중 기록이 정한다.
     `par`는 같은 `rows`의 `effective_parents`다 — 여러 항목을 판정할 때 한 번만 잰다."""
     par = core.effective_parents(rows) if par is None else par
     plans = {r["manifest"] for r in rows
@@ -147,7 +148,8 @@ def _latest(rows: list[dict], value: str, field: str, par=None) -> dict | None:
     kept = {m for m in plans if not any(m in anc[o] for o in plans if o != m)}
     top = core.causal_maxima(rows, value, par, field, candidate=(
         (lambda r: r.get("manifest") in kept) if plans else None))
-    return top[0] if len(top) == 1 else None
+    said = lambda r: {k: v for k, v in r.items() if k not in ("rid", "parents", "at")}
+    return top[0] if top and all(said(r) == said(top[0]) for r in top) else None
 
 
 def _completed(key: str, rows: list[dict], idx: graph.Index, par=None) -> dict | None:
