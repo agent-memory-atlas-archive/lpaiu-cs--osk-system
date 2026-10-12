@@ -35,6 +35,9 @@ LEGACY = {"growth": {"osk-domain-growth"},
 GROWTH_ARGS = ("--limit", "3", "--timeout", "600")
 # 정기 실행 한 번의 상한 — 에이전트 시한(600초)에 포착·계획의 여유를 더한다.
 GROWTH_MINUTES = 30
+# 작업 스케줄러 우선순위 — 기본 7은 BELOW_NORMAL이라, 보통 등급의 일이 CPU를 채우면 등록한
+# 일과 그 git이 굶은 채 mutation 잠금을 쥔다(2026-10-12 실측: `rev-parse` 83초). 5는 보통 등급.
+TASK_PRIORITY = 5
 LAUNCHD_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
@@ -149,7 +152,8 @@ $rows = @(Get-ScheduledTask | ForEach-Object {
       triggers = @($_.Triggers | ForEach-Object { [pscustomobject]@{
         kind = [string]$_.CimClass.CimClassName; start = [string]$_.StartBoundary } });
       battery = [bool]$_.Settings.DisallowStartIfOnBatteries;
-      limit = [string]$_.Settings.ExecutionTimeLimit; enabled = [bool]$_.Settings.Enabled }
+      limit = [string]$_.Settings.ExecutionTimeLimit; enabled = [bool]$_.Settings.Enabled;
+      priority = [int]$_.Settings.Priority }
   }
 })
 ConvertTo-Json -InputObject $rows -Depth 6 -Compress
@@ -162,7 +166,8 @@ $action = New-ScheduledTaskAction -Execute $s.execute -Argument $s.arguments -Wo
 if ($s.at) { $trigger = New-ScheduledTaskTrigger -Daily -At $s.at }
 else { $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user }
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-  -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::FromMinutes([int]$s.minutes))
+  -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::FromMinutes([int]$s.minutes)) `
+  -Priority ([int]$s.priority)
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName $s.name -TaskPath '\' -Action $action -Trigger $trigger `
   -Settings $settings -Principal $principal -Description $s.description -Force | Out-Null
@@ -225,7 +230,8 @@ class TaskScheduler(Backend):
                         "tokens": [t for a in actions for t in _win_tokens(a["execute"], a["arguments"])],
                         "definition": {"actions": actions, "trigger": trigger,
                                        "battery": bool(row.get("battery")), "limit": row.get("limit"),
-                                       "enabled": row.get("enabled", True) is not False}})
+                                       "enabled": row.get("enabled", True) is not False,
+                                       "priority": row.get("priority")}})
         return out
 
     def _spec(self, kind: str, job: dict) -> dict:
@@ -238,7 +244,7 @@ class TaskScheduler(Backend):
             arguments = '/c set SYNC_ENABLED=1&& start "" "{}" "{}"'.format(job["python"], job["args"][0])
         return {"name": self.ident(kind), "execute": execute, "arguments": arguments,
                 "workdir": str(core.ROOT), "at": job["at"],
-                "minutes": GROWTH_MINUTES if kind == "growth" else 0,
+                "minutes": GROWTH_MINUTES if kind == "growth" else 0, "priority": TASK_PRIORITY,
                 "description": f"osk-system {kind} — {core.ROOT}", "start": kind == "sync"}
 
     def definition(self, kind: str, job: dict) -> dict:
@@ -247,7 +253,8 @@ class TaskScheduler(Backend):
                 "trigger": (["MSFT_TaskDailyTrigger", s["at"]] if kind == "growth"
                             else ["MSFT_TaskLogonTrigger", None]),
                 "battery": False, "limit": f"PT{s['minutes']}M" if s["minutes"] else "PT0S",
-                "enabled": True}          # 꺼 둔 작업은 다시 등록해 켠다 — 사용자가 고른 기능이다
+                "enabled": True,          # 꺼 둔 작업은 다시 등록해 켠다 — 사용자가 고른 기능이다
+                "priority": s["priority"]}    # 기본 7로 등록된 옛 작업도 다시 등록해 올린다
 
     def install(self, kind: str, job: dict, stamp: str) -> dict:
         spec = self._spec(kind, job)
