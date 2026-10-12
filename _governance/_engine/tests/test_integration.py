@@ -2377,6 +2377,30 @@ print(json.dumps({'record': st['record'], 'refs': st['pending_refs'], 'appended'
         self.assertEqual((copied["inherited_rounds"], copied["captured_rounds"], copied["space"]),
                          (1, 1, "00_Scope/W1"), copied)
 
+    def test_a_resumed_copy_of_an_unlanded_one_off_conversation_takes_no_binding_of_its_key(self):
+        # The parent's landing is the parent's, judged by its own workspace: a process outside
+        # that folder (a catch-up) must not read a same-named repository key's binding as it.
+        from osk import workspaces
+        root = Path(TMP.name) / f"{self.sid}-root"
+        core.ledger_append(workspaces.LEDGER, {"kind": "rule", "harness": "claude", "version": "2.1.281",
+                                               "root": str(root), "shape": r"[a-z]+-[a-z]+"})
+        self.addCleanup(workspaces.LEDGER.unlink, missing_ok=True)
+        cwd = root / "amber-quartz"
+        cwd.mkdir(parents=True)
+        write.bind_session("amber-quartz", "W1", "a repository key of the same name")
+        parent = self.sid + "-parent"
+        self.forget(parent, self.sid)
+        rows = [{**r, "cwd": str(cwd)} for r in claude_round(parent, 1)]
+        rows[0]["uuid"] = str(uuid.uuid4())
+        self.transcript(rows)
+        self.assertIsNone(it.capture("claude", parent, str(self.path), "amber-quartz")["space"])
+        self.transcript([dict(r, sessionId=self.sid) for r in rows]
+                        + [{**r, "cwd": str(cwd)} for r in claude_round(self.sid, 2)])
+        copied = it.capture("claude", self.sid, str(self.path), "amber-quartz")
+        self.assertTrue(copied["ok"], copied)
+        self.assertEqual((copied["inherited_rounds"], copied["captured_rounds"], copied["space"]),
+                         (1, 1, None), copied)
+
     def test_a_citation_cut_before_its_pin_lands_where_its_record_is(self):
         key = self.sid + "-key"
         self.forget(self.sid)

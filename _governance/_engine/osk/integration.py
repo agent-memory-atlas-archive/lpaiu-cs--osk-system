@@ -280,7 +280,8 @@ def _scope_cursors(s: dict):
             owner = _load(candidate, "claude", data["conversation_id"])
             if candidate != state_path("claude", owner["conversation_id"]):
                 continue
-            bound = write.resolve_session(owner["session"]) if owner["session"] else None
+            # 부모의 착지는 부모의 작업 공간 판별로 정한다 — 이 프로세스의 작업 폴더로 정하지 않는다
+            bound = write.resolve_session(owner["session"]) if owner["session"] and not _one_off(owner) else None
             landing = owner["space"] or (f"{SCOPE}/{bound}" if bound else None)
             # 착지 없는 대화는 어느 커서와도 견준다 — 이어받는 것은 원본 턴뿐이고, 부모가 착지했으면
             # 그 착지를 잇는다(`_inherited_rounds`). 착지한 대화는 같은 scope의 커서와만 견준다.
