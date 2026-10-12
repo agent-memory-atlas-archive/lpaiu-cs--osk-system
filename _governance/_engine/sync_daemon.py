@@ -197,7 +197,24 @@ def _once_locked(root: Path, fetched: tuple[str, str | None] | None) -> tuple[st
     return "ok", head
 
 
+def _normal_priority() -> None:
+    """Windows 예약 작업은 기본 우선순위 7(BELOW_NORMAL)로 띄우고, 자식 git도 그 등급을
+    물려받는다. 보통 등급의 일이 CPU를 다 쓰면 이 등급은 몇 초에 한 번 굶주림 부스트로만
+    돌아 git 한 번이 수십 초 걸린다 — 10초 timeout이 주기마다 터져 동기화가 멈추고, 그
+    사이 쥔 mutation 잠금은 보통 등급의 쓰기를 붙잡는다(2026-10-12 실측: CPU 100%에서
+    `rev-parse` 83초, 보통 등급이면 1~2초). 하는 일이 주기마다 git 몇 번이라 보통이 맞다."""
+    if os.name != "nt":
+        return
+    import ctypes
+    k32, me = ctypes.windll.kernel32, ctypes.c_void_p(-1)    # GetCurrentProcess()
+    # ponytail: CPU 등급만 올린다 — 함께 낮게 물려받는 I/O(1)·메모리(2) 우선순위는 이
+    # 기기(NVMe·여유 RAM)에서 무영향으로 실측됐다. 디스크·메모리 경합에서 굶으면 함께 올린다.
+    if k32.GetPriorityClass(me) in (0x40, 0x4000):           # IDLE, BELOW_NORMAL
+        k32.SetPriorityClass(me, 0x20)                       # NORMAL — 자식 git도 따른다
+
+
 def main():
+    _normal_priority()
     if sys.stderr is None:
         # 콘솔 없이 떴다(Windows 작업의 `pythonw.exe`) — 알림을 버리지 않고 기기 로컬 로그에
         # 남긴다. 추적 트리 밖이라 데몬 자신의 `git add -A`가 싣지 않는다.
