@@ -482,7 +482,8 @@ def prompt(planned: dict | None = None, limit: int = 3) -> str:
         "Do not run the osk CLI or "
         "shell commands for osk work: a sandboxed runner cannot execute them, and every attempt "
         "spends the time budget. Record each decision in the final packet below; the runner "
-        "applies it after you finish. For scope_jobs use each job's original session, "
+        "applies it after you finish. For scope_jobs use each job's original session (none for a job "
+        "whose prompt marks a one-off workspace), "
         "pending_refs and exact through snapshot; an empty shared memory or a short conversation "
         "is not a reason to omit that review. Keep unrelated source conversations distinct. "
         "Review only the selected Domain candidates and organization_jobs at their work_order positions. "
@@ -518,7 +519,12 @@ def prompt(planned: dict | None = None, limit: int = 3) -> str:
         "carries hub_tree, its scope's hubs with their direct node counts: descend from the top hub "
         "to the deepest hub that covers the topic and link the node there. That cluster path is "
         "create_node.space and its last segment is distill.hub. Hub differentiation belongs to the "
-        "organization review: do not open sub-clusters; propose one in the review reason if needed.\n"
+        "organization review: do not open sub-clusters; propose one in the review reason if needed. "
+        "A Scope job without hub_tree has no scope yet: follow its prompt's membership order "
+        "(Bylaws §3 9). Close it as no_value when nothing is worth keeping; otherwise its first "
+        "cite_round with space fixes its landing, and Person-only knowledge goes to Person Space "
+        f"with its rounds cited under space `{core.PERSON}` — only under the facet's active statute: "
+        "read its `<facet>-law` node first, and defer if none is active (Bylaws §4 8).\n"
         # 두 경우를 한 문장에 담았더니 정기 실행 작업자가 자신을 Stop fork로 여겨 읽지 않고
         # 판정했다(v5.0.0 운영 관측). 엔진은 어느 쪽인지 알므로 그 경우의 문장만 싣는다.
         + ("Scope jobs: pending_refs starting with native: are original turns of the conversation "
@@ -589,10 +595,12 @@ def prompt(planned: dict | None = None, limit: int = 3) -> str:
         "Retain useful shared knowledge in the ordinary vault. Do not blanket-isolate it. "
         "Do not invent value or force unrelated sources into one claim. Use no_value with "
         "a concrete reason when there is no reusable synthesis, or deferred with the missing "
-        "evidence/permission and next action. User-only new-cluster confirmation still applies. "
-        "Do not repeat a new-cluster refusal as a substitute for actual user consent. "
-        "If the needed cluster has not been approved, record deferred with its proposed "
-        "cluster and node title for the user briefing.\n"
+        "evidence/permission and next action. A write refused as a new top-level cluster may be "
+        "sent again only to open the scope an unlanded conversation belongs to (Bylaws §3 9) or a "
+        "domain this run forms (Bylaws §3 1, named in the review reason as a report). Any other "
+        "new top-level cluster, such as a scope opened by moving nodes, needs the user's consent: "
+        "do not resend it; record deferred with its proposed cluster and node title for the user "
+        "briefing.\n"
         "For preservation use create_node/update_node with distill={key: candidate.distill_key, "
         "sources: [{ref: source.id, hash: source.hash}, ...], hub: existing selected hub name}. "
         "Cite only the selected sources that actually support the synthesis, with their exact "
@@ -1172,7 +1180,9 @@ def run(command: list[str], limit: int = 3, timeout: int = 600, *,
                 planned["engine_rev"] = core.epoch.loaded()
                 if scope_job is not None and scope_job.get("session"):
                     from . import write
-                    scope = write.resolve_session(scope_job["session"])
+                    # 일회성 작업 공간의 대화는 그 키의 결속을 따르지 않는다(Mechanism §6-2 6항)
+                    scope = (None if (scope_job.get("workspace") or {}).get("one_off")
+                             else write.resolve_session(scope_job["session"]))
                     planned["work_context"] = "stop:" + (scope or scope_job["session"])
                     planned["organization_jobs"] = organization.pending([scope], limit=1) if scope else []
                     # 정기 실행이 없으면 이 scope의 재검토를 fork가 맡는다.

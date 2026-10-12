@@ -187,6 +187,11 @@ def session_key(cwd: str) -> str:
     이름만으로는 무관한 두 저장소가 한 키를 나눠 가지므로, Git 저장소는 결속의
     소유자와 뿌리가 다르면 파생 키를 받는다(`write.repo_session`)."""
     name, repo = _checkout(cwd)
+    try:
+        from osk import workspaces
+        workspaces.enter(cwd)        # 이 프로세스의 결속 판정이 그 작업 폴더를 알게 한다(Mechanism §6-2 6항)
+    except Exception:
+        pass
     if not repo:
         return name
     try:
@@ -236,8 +241,10 @@ def _memory_block(scope_memory, key: str, st: dict | None = None) -> str:
         f"hash: {st['hash']}\n---\n{text}")
 
 
-def _bootstrap(key: str, *, bound: bool, ident: tuple | None = None) -> str:
+def _bootstrap(key: str, *, bound: bool, ident: tuple | None = None, workspace: dict | None = None,
+               landing: str | None = None) -> str:
     arg = json.dumps(key, ensure_ascii=False)
+    workspace = workspace or {}
     # `cite_round(conversation=…)` names this conversation by the pair below.
     conversation = (f" · conversation={json.dumps(ident[0] + '/' + ident[1], ensure_ascii=False)}"
                     if ident else "")
@@ -247,7 +254,13 @@ def _bootstrap(key: str, *, bound: bool, ident: tuple | None = None) -> str:
             "기억을 묻는 질문에는 `search`를 먼저 쓴다. "
             + ("아래 scope 기억을 통합의 출발점으로 삼는다."
                if bound else "아직 scope 결속이 없다. 착지를 추측하지 말고 overview의 "
-               "군집에서 해당 프로젝트를 확인한 뒤 scope_memory를 읽어라."))
+               "군집에서 해당 프로젝트를 확인한 뒤 scope_memory를 읽어라.")
+            + (" 이 작업 폴더는 일회성 작업 공간이라 세션 키를 결속하지 않고 그 키에 선 결속도 따르지 "
+               "않는다(Mechanism §6-2 6항) — 쓰기 도구에 session을 주지 말고, 노드나 인용을 쓸 때 space를 "
+               "명시한다. 그 착지는 이 대화에만 적용된다." if workspace.get("one_off") else "")
+            + (f" 이 대화는 `{landing}`에 착지해 있다 — 쓸 때 space에 그 경로를 준다."
+               if landing and not bound else "")
+            + (f" 작업 공간 판별: {workspace['warning']}" if workspace.get("warning") else ""))
 
 
 def _budget(env: dict, host=None) -> int | None:
@@ -483,7 +496,13 @@ def main() -> None:
         notice = Block("notice", notice, 40, label="새 릴리스 알림(overview의 update)",
                        on_shown=notified)
         scope = write.resolve_session(key)
-        bootstrap = Block("bootstrap", _bootstrap(key, bound=bool(scope), ident=ident))
+        try:
+            from osk import integration
+            seen = integration.status(*ident) if ident else {}
+        except Exception:
+            seen = {}           # 판별을 못 읽어도 시작 안내는 싣는다
+        bootstrap = Block("bootstrap", _bootstrap(key, bound=bool(scope), ident=ident, workspace=seen.get("workspace"),
+                                                  landing=seen.get("space")))
         try:
             recovery = _recovery(scope_memory, key)
         except Exception:

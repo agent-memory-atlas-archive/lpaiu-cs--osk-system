@@ -235,7 +235,7 @@ def run() -> dict:
     # 유입(수동 편집·구 엔진 기기에서의 동기화·나중에 추가된 패턴)은 그 필터를
     # 지나지 않는다. §9 1항이 검증기를 집행 지점으로 두는 이유가 그것이다.
     for d in sorted([*(ROOT / SCOPE).rglob("_cited"), *(ROOT / SCOPE).rglob("_raw"),
-                     *(ROOT / SCOPE).rglob("_scope_memory")]):
+                     *(ROOT / SCOPE).rglob("_scope_memory"), ROOT / PERSON / "_cited"]):
         if not d.is_dir():
             continue
         for p in sorted(d.rglob("*")):
@@ -521,7 +521,10 @@ def _outgoing_refs(idx: "graph.Index", stem: str, members: set) -> set:
 #     다시 넣는 배선과 재검토 완료를 갈랐다 — 근거를 다른 까닭으로 다시 넣은 호출이 점검을
 #     닫지 않는다. 스키마만 자란다(+92). 쓰는 법은 후보와 함께 오는 `rechecks.close`가
 #     가르치므로 설명에는 싣지 않는다.
-SCHEMA_BUDGET = 7800
+#   7800 → 7900: `cite_round`의 `space`(시행령 §3 9항·Mechanism §9-4 3항, 2026-10-12). 소속
+#     scope 없는 대화의 첫 인용이 그 대화의 착지를 정한다. 스키마만 자란다(+60). 쓰는 법은
+#     소속 없는 대화의 검토 지시(`integration.UNLANDED`)가 가르치므로 설명에는 싣지 않는다.
+SCHEMA_BUDGET = 7900
 
 # 마지막 표면 린트의 상주 비용 분해 — surface_lint가 채우고 run이 보고에 싣는다.
 _last_surface_cost: dict | None = None

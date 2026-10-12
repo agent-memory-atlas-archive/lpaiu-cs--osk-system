@@ -492,7 +492,7 @@ def replace(session: str, text: str | None = None,
         # 결속을 **쓰기 전에** 세운다. 뒤에 두면 대장이 손상됐을 때 파일은
         # 남고 결속은 안 서서, 표면이 "아무것도 쓰지 않았다"고 보고하는데도
         # 호출자가 방금 쓴 것에 닿지 못하는 상태가 된다(부분 성공 금지).
-        if not bound:
+        if not bound and not write.workspaces.is_one_off(session):   # 일회성 작업 공간은 결속하지 않는다
             write.bind_session(session, scope, "첫 scope 기억 쓰기에서 확정")
         p.parent.mkdir(parents=True, exist_ok=True)
         write._atomic_write(p, (body + chr(10)).encode("utf-8") if body else b"")

@@ -12,13 +12,26 @@ from datetime import datetime
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import core, raw, scope_memory, transcripts, write
+from . import core, raw, scope_memory, transcripts, workspaces, write
 from . import harness as adapters
 from ._portalock import lock_exclusive, unlock
 
 SOFT, HARD = 9, 15
 MAX_REVIEW_ROUNDS = 15
 ENDED_AFTER = 12 * 3600  # seconds without a transcript change: the conversation ended (Mechanism §9-4 3항)
+# 소속 scope가 없는 대화의 검토가 소속을 정하는 순서(시행령 §3 9항 · Mechanism §9-4 3항).
+UNLANDED = (
+    "이 대화는 아직 소속 scope가 없다(시행령 §3 9항). 먼저 남길 것이 있는지 판정한다. 남길 것이 없으면 "
+    "소속을 정하지 않고 no_value로 닫는다 — 닫음은 이번 범위에만 미치고, 대화가 이어지면 이어진 턴을 "
+    "다시 판정한다. 남길 것이 있으면 다음 순서로 소속을 정한다. ① 그 활동의 scope가 있으면 그 scope다 — "
+    "같은 활동의 다른 이름, 같은 저장소와 그 포크·하위 모듈, 기존 scope의 활동 범위 안의 작업이 든다. "
+    "② 없고 고유한 작업 대상(저장소·프로젝트·연구 과제)을 가진, 이어지는 활동이면 그 정본 이름으로 scope를 "
+    "새로 연다. ③ 둘 다 아니면 scope를 열지 않는다 — Person에 둘 것만 Person Space에 두고, 그 근거 "
+    f"라운드는 cite_round(space=\"{core.PERSON}\")로 인용한다. Person에 쓰기 전에 그 facet의 율령 노드"
+    "(`<facet>-law`)를 먼저 읽고, 활성인 율령이 없으면 쓰지 않는다 — 대화 안에서는 율령 작성을 사용자에게 "
+    "제안하고, 정기 실행은 deferred로 남긴다(시행령 §4 8항). "
+    f"①·②는 cite_round(space=\"{SCOPE}/<이름>\")의 "
+    "첫 인용이 이 대화의 착지로 고정한다. 그 scope를 overview로 보고 허브 트리에서 노드의 자리를 정한다.\n")
 
 
 def _identity(harness: str, conversation_id: str) -> str:
@@ -158,6 +171,7 @@ def _view(s: dict) -> dict:
             "capture_pending": s["capture_pending"], "capture_error": s["capture_error"],
             "capture_recovery": _capture_recovery(s),
             "coverage": s.get("coverage"), "excluded": s.get("excluded"),
+            "space": s["space"], "workspace": s.get("workspace"),
             "inherited_rounds": len((s.get("inherited") or {}).get("rounds", [])),
             "pending_refs": [r["ref"] for i, r in enumerate(rs) if i >= n or r["ref"] in repair_refs],
             "through": _snapshot(s),
@@ -266,10 +280,13 @@ def _scope_cursors(s: dict):
             owner = _load(candidate, "claude", data["conversation_id"])
             if candidate != state_path("claude", owner["conversation_id"]):
                 continue
-            owner_scope = owner["space"] or (
-                (SCOPE + '/') + (write.resolve_session(owner["session"]) or ""))
-            if owner_scope == s["space"]:
-                yield owner
+            # 부모의 착지는 부모의 작업 공간 판별로 정한다 — 이 프로세스의 작업 폴더로 정하지 않는다
+            bound = write.resolve_session(owner["session"]) if owner["session"] and not _one_off(owner) else None
+            landing = owner["space"] or (f"{SCOPE}/{bound}" if bound else None)
+            # 착지 없는 대화는 어느 커서와도 견준다 — 이어받는 것은 원본 턴뿐이고, 부모가 착지했으면
+            # 그 착지를 잇는다(`_inherited_rounds`). 착지한 대화는 같은 scope의 커서와만 견준다.
+            if s["space"] is None or landing == s["space"]:
+                yield owner, landing
         except (OSError, ValueError, KeyError):
             continue
 
@@ -278,12 +295,11 @@ def _inherited_rounds(s: dict, rounds: list, dialogue_v1: dict | None = None) ->
     """Reuse only the caller's copied prefix, with native ID and byte evidence."""
     if s["harness"] == "codex":
         return _fork_parent_turns(s, rounds, dialogue_v1)
-    if s["harness"] != "claude" or not s["space"]:
+    if s["harness"] != "claude":
         return rounds
-    scope = raw._scope_of_space(s["space"])
-    path = raw.record_path(scope, s["record"])
-    inherited = raw.inherited_prefix(path) or s.get("inherited")
-    if not inherited and (path.exists() or s["rounds"]):
+    path = raw.record_path(raw._scope_of_space(s["space"]), s["record"]) if s["space"] else None
+    inherited = (raw.inherited_prefix(path) if path else None) or s.get("inherited")
+    if not inherited and (path and path.exists() or s["rounds"]):
         return rounds  # A conversation already tracking its own turns keeps them.
     cache = {}
 
@@ -331,12 +347,14 @@ def _inherited_rounds(s: dict, rounds: list, dialogue_v1: dict | None = None) ->
         return False
 
     if inherited is None:
-        known = {}
+        known, landings = {}, {}
         if rounds and re.fullmatch(r"[0-9a-fA-F-]{36}", rounds[0]["id"].split(":")[0]):
             # ponytail: one local-state scan on first capture; index native IDs if this grows costly.
-            for owner in _scope_cursors(s):
+            for owner, landing in _scope_cursors(s):
                 for source in owner["rounds"]:
-                    known.setdefault(source["id"], []).append(source)
+                    if s["space"] or raw.is_native(source["ref"]):   # 저장 라운드는 그 scope의 것이다
+                        known.setdefault(source["id"], []).append(source)
+                        landings[source["id"], source["ref"]] = landing
         shared = []
         for pair in rounds:
             candidates = known.get(pair["id"], [])
@@ -347,6 +365,9 @@ def _inherited_rounds(s: dict, rounds: list, dialogue_v1: dict | None = None) ->
                 raise ValueError("copied native round ID has different content; capture remains pending")
             shared.append(source)
         inherited = {"rounds": shared} if shared else None
+        if shared and not s["space"]:
+            # 재개 사본은 같은 대화가 이어진 것이다 — 부모가 고정한 착지를 잇는다
+            s["space"] = next((landings[r["id"], r["ref"]] for r in shared if landings.get((r["id"], r["ref"]))), None)
     if inherited:
         prefix = inherited["rounds"]
         if (len(rounds) < len(prefix)
@@ -370,11 +391,30 @@ def _locate_transcript(harness: str, sid: str, saved: str | None = None) -> str 
     return str(matches[0]) if matches else saved
 
 
+def _workspace(s: dict, path: str | None, cwd: str | None) -> bool:
+    """이 대화의 작업 폴더가 일회성 작업 공간인가(Mechanism §6-2 6항) — 처음 알 수 있을 때 한 번
+    판별해 대화에 고정한다. 원본 전사가 적은 작업 폴더를 먼저 쓰고, 없으면 훅의 작업 폴더를 쓴다.
+    판별은 그 대화의 것이다 — 같은 이름의 키를 쓰는 다른 세션에 번지지 않는다."""
+    if "workspace" not in s:
+        seen = transcripts.workspace(path, s["harness"]) if path and Path(path).is_file() else None
+        where = (seen or {}).get("cwd") or cwd
+        if where:
+            s["workspace"] = (workspaces.judge(s["harness"], where, (seen or {}).get("version"))
+                              or {"one_off": False})
+    return _one_off(s)
+
+
+def _one_off(s: dict) -> bool:
+    return bool((s.get("workspace") or {}).get("one_off"))
+
+
 def capture(harness: str, conversation_id: str, transcript_path: str | None,
-            session: str, space: str | None = None) -> dict:
+            session: str, space: str | None = None, cwd: str | None = None) -> dict:
     """Track this conversation's completed turns for review. The dialogue stays in the
     harness transcript: the cursor keeps original-turn refs and hashes, never vault text
-    (헌법 4조 3항 · 시행령 §2 2항). Evidence enters `_cited/` only through `cite`."""
+    (헌법 4조 3항 · 시행령 §2 2항). Evidence enters `_cited/` only through `cite`.
+    Tracking does not wait for a landing: citing a turn and writing a node need one, and
+    the review of an unlanded conversation decides it (Mechanism §9-4 3항)."""
     with _locked(harness, conversation_id) as p:
         s = _load(p, harness, conversation_id)
         s["capture_pending"], s["capture_error"] = True, None
@@ -382,6 +422,9 @@ def capture(harness: str, conversation_id: str, transcript_path: str | None,
         _save(p, s)  # Persist intent before reading; failures remain pending.
         phase = "landing"
         try:
+            # 일회성 작업 공간의 대화는 그 키에 선 결속을 따르지 않는다 — 착지는 대화에 고정한 것뿐이다
+            follow = not _workspace(s, (str(Path(transcript_path).resolve()) if transcript_path else None)
+                                    or s.get("capture_path") or s["transcript_path"], cwd)
             pinned = s["space"]
             stored = next((r["ref"] for r in s["rounds"] if not raw.is_native(r["ref"])), None)
             if not pinned and stored:
@@ -392,13 +435,13 @@ def capture(harness: str, conversation_id: str, transcript_path: str | None,
                 if not scope:
                     raise ValueError("saved conversation scope is invalid; capture remains pending")
                 pinned = (SCOPE + '/') + scope
-            destination, bound = write.resolve_landing(session, space, raw._CONFINE)
+            destination, bound = write.resolve_landing(session if follow else None, space, raw._CONFINE)
             requested = (SCOPE + '/') + destination if destination else None
             if pinned and not requested and s["session"]:
                 # A generic cwd key must not bind unrelated conversations.
                 # Resume this native ID using its explicitly chosen session.
                 session = s["session"]
-                destination, bound = write.resolve_landing(session, pinned, raw._CONFINE)
+                destination, bound = write.resolve_landing(session if follow else None, pinned, raw._CONFINE)
                 requested = (SCOPE + '/') + destination
             if (pinned and requested and pinned != requested
                     or s["session"] and s["session"] != session
@@ -442,7 +485,7 @@ def capture(harness: str, conversation_id: str, transcript_path: str | None,
             # ponytail: serialize tracking until its cursor is saved; use per-scope
             # locks if capture throughput matters.
             with _locked_path(core.local_lock_path("osk-capture-prefix.lock")):
-                phase = "replay" if s["space"] else "landing"
+                phase = "replay"
                 rounds = _inherited_rounds(s, parsed["rounds"], parsed.get("dialogue_v1"))
                 if harness == "codex":
                     # A recovered past turn follows the turns already tracked: keep the saved order.
@@ -455,9 +498,6 @@ def capture(harness: str, conversation_id: str, transcript_path: str | None,
                 ids = [r["id"] for r in rounds]
                 if len(ids) != len(set(ids)) or ids[:len(s["rounds"])] != [r["id"] for r in s["rounds"]]:
                     raise ValueError("native round identity prefix changed; the review cursor was not moved")
-                if rounds and not s["space"]:
-                    # Tracking writes nothing, but citing a turn needs its landing (Mechanism §9 9항).
-                    raise write.WriteError("착지 미정 — 추적하지 않았다. 결속된 세션 키 또는 명시 space로 capture한다")
                 # Existing snapshots bind the saved entries: keep them, add the new turns.
                 # An unreviewed original turn whose words changed under its ID is tracked
                 # as it reads now, and snapshots taken before the change are dropped: no
@@ -600,11 +640,17 @@ def acknowledge(harness: str, conversation_id: str, through: str,
                 if receipt.get("status") != "complete" or not {raw.canonical_ref(ref) for ref in refs} & bound:
                     raise ValueError("target has no complete body/source/hub receipt for this snapshot")
                 target_path = core.resolve_in_root(receipt.get("target", {}).get("path", ""))
-                if target_path is None or not raw.graph.space_of(target_path)[0] == "scope":
-                    raise ValueError("preserved integration target must be a durable Scope node")
+                # Person 대상은 소속 scope 없는 세션이 Person에 둔 것뿐이다(시행령 §3 9항) — 그 근거 라운드는
+                # Person Space의 인용 기록에 있다(§2 8항)
+                kind = raw.graph.space_of(target_path)[0] if target_path is not None else None
+                if kind == "person" and not any(raw.is_person_record(src.get("path")) for src in sources):
+                    raise ValueError("a Person target cites rounds kept in Person Space (Bylaws §2 8)")
+                if kind not in ("scope", "person"):
+                    raise ValueError("preserved integration target must be a durable Scope or Person node")
                 receipts.append(receipt)
         elif outcome == "summary":
-            memory = scope_memory.read(s["session"])
+            # 일회성 작업 공간의 대화는 그 키의 결속이 아니라 대화에 고정한 착지의 기억을 본다
+            memory = scope_memory.read(None, s["space"]) if _one_off(s) else scope_memory.read(s["session"])
             if not isinstance(targets, list) or not targets or not all(
                     isinstance(t, dict) and isinstance(t.get("text"), str) and t["text"].strip()
                     and t["text"] in memory["text"] for t in targets):
@@ -784,12 +830,12 @@ def _copied_since(s: dict, native_path: str) -> str | None:
     경계·표현이 갈라진다. 그 커서들의 경계 가운데 이 전사에서 가장 뒤에 오는 것을 쓴다.
     부모가 저장한 절단 지점은 넘기지 않는다 — 사본에서도 행 시각의 12시간 공백이 같은
     자리를 나눈다."""
-    rounds = transcripts.read(native_path, "claude", s["conversation_id"])["rounds"] if s["space"] else []
+    rounds = transcripts.read(native_path, "claude", s["conversation_id"])["rounds"]
     if not rounds or not re.fullmatch(r"[0-9a-fA-F-]{36}", rounds[0]["id"].split(":")[0]):
         return None   # 복제는 원래 행 id(UUID)로만 알아본다 — _inherited_rounds와 같은 기준
     order = {r["id"]: i for i, r in enumerate(rounds)}
     best = None
-    for owner in _scope_cursors(s):
+    for owner, _landing in _scope_cursors(s):
         tracked = (owner.get("inherited") or {}).get("rounds", []) + owner["rounds"]
         bound = owner["turns_since"] if "turns_since" in owner else (tracked[-1]["id"] if tracked else None)
         if bound in order and (best is None or order[bound] > order[best]):
@@ -887,8 +933,7 @@ def _known_pending(limit: int | None, tried=None) -> tuple[list, int, list, list
             pending = current["pending_refs"]
             # An ended Claude conversation whose last turn never finished is read once more:
             # the idle close turns that tail into an interrupted round to review.
-            idle_tail = (s["harness"] == "claude" and s["capture_pending"] and not s["capture_error"]
-                         and s.get("space"))
+            idle_tail = s["harness"] == "claude" and s["capture_pending"] and not s["capture_error"]
             if (changed or current["repair_pending"] or any(not raw.is_native(ref) for ref in pending)
                     or (pending or idle_tail) and _ended_source(s)):
                 at = _turn_at(s, native_path)
@@ -918,22 +963,30 @@ def list_pending(limit: int = 20) -> dict:
 
 def catchup(limit: int = 20, *, max_rounds: int = MAX_REVIEW_ROUNDS, tried=None) -> dict:
     """Bounded scheduler catch-up of known own vault states; never inject these in a normal session.
-    작업을 만들지 못한 대화(원본 유실·포착 실패 등)는 건너뛰고 다음 대화로 `limit`을 채운다 —
-    그런 대화가 순서의 앞에 남아 한도를 차지하면 다른 대화가 영영 검토되지 않는다. 그래서 조회에
-    상한을 두지 않고 정렬한 대기 전체를 작업이 찰 때까지 내려간다."""
+    포착(모델 비용이 없다)과 작업 선택을 나눈다. 대기 전체를 먼저 포착하고, 따라잡은 커서로
+    다시 세운 순서에서 `limit`개를 고른다 — 작업이 차면 포착도 멈추던 때에는 뒤에 선 대화의 새
+    턴이 추적되지 않아, 새 턴으로 다시 열린 대화가 순서에 오르지 못했다(#179). 작업을 만들지
+    못한 대화(원본 유실·포착 실패 등)는 건너뛰고 다음 대화로 `limit`을 채운다."""
     if not isinstance(limit, int) or not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
     states, _, errors, awaiting_native = _known_pending(None, tried)
     captures, jobs = [], []
     for s in states:
-        if len(jobs) >= limit:
-            break
         try:
             result = capture(s["harness"], s["conversation_id"],
                              s.get("capture_path") or s["transcript_path"], s["session"], s.get("space"))
-            captures.append({k: result.get(k) for k in (
-                "harness", "conversation_id", "ok", "appended", "capture_error", "capture_recovery")})
-            if result["pending_refs"]:
+            if result.get("appended") or not result.get("ok"):   # 실행 기록에는 바뀐 것만 남긴다
+                captures.append({k: result.get(k) for k in (
+                    "harness", "conversation_id", "ok", "appended", "capture_error", "capture_recovery")})
+        except Exception as exc:
+            errors.append({"harness": s["harness"], "conversation_id": s["conversation_id"], "error": str(exc)})
+    states, _, again, _ = _known_pending(None, tried)
+    errors += [e for e in again if e not in errors]
+    for s in states:
+        if len(jobs) >= limit:
+            break
+        try:
+            if _view(s)["pending_refs"]:
                 job = prompt(s["harness"], s["conversation_id"], include_organization=False,
                              max_rounds=max_rounds, offline=True)
                 if job["pending_refs"]:
@@ -1069,7 +1122,7 @@ def prompt(harness: str, conversation_id: str, *, include_organization: bool = T
     from . import organization
     jobs = []
     try:
-        scope = write.resolve_session(st["session"]) if st.get("session") else None
+        scope = write.resolve_session(st["session"]) if st.get("session") and not _one_off(s) else None
     except (OSError, ValueError, write.WriteError):
         scope = None
     try:
@@ -1112,9 +1165,17 @@ def prompt(harness: str, conversation_id: str, *, include_organization: bool = T
              "새 snapshot은 새 작업 키를 쓴다. ACK만 유실됐다면 위 complete 증거의 "
              "기존 key를 targets에 재사용하며, 같은 본문을 새 key로 다시 쓰지 않는다.\n")
     stored = [ref for ref in st["pending_refs"] if not raw.is_native(ref)]
+    workspace = s.get("workspace") or {}
+    if workspace.get("warning"):
+        text += f"작업 공간 판별: {workspace['warning']}\n"
+    if workspace.get("one_off"):
+        text += ("이 대화의 작업 폴더는 일회성 작업 공간이라 세션 키를 결속하지 않는다(Mechanism §6-2 6항) — "
+                 "쓰기 도구에 session을 주지 말고, 노드를 쓸 때마다 space를 준다.\n")
     text += "search로 기존 노드를 찾는다. " + write.CLAIM_GUIDANCE + "오래 쓸 지식만 Scope 노드로 옮긴다. "
     # 세션이 아직 결속되지 않았으면(첫 노드 쓰기 전) 이 대화가 착지한 scope로 본다
     tree_scope = scope or (raw._scope_of_space(s["space"]) if s.get("space") else None)
+    if not tree_scope:
+        text += UNLANDED
     try:
         tree = organization.hub_tree(organization._scope_path(tree_scope)) if tree_scope else ""
     except (OSError, ValueError):
@@ -1192,11 +1253,33 @@ def cite(conversation: str, quote: str | None = None, turn: str | int | None = N
     copies the user's words from the harness transcript and keeps the agent's reply as
     location and hash; the caller names the turn and never resends its text."""
     harness, sid = _conversation(conversation)
+    # 착지 확인·기록·고정을 이 대화의 잠금 하나 안에서 한다 — 같은 대화의 첫 인용 둘이 서로 다른
+    # scope로 갈리지 않는다. 잠금 순서는 검토 ACK와 같다(대화 잠금 → 변경 잠금).
     with _locked(harness, sid) as p:
-        s = _load(p, harness, sid)
+        return _cite(p, _load(p, harness, sid), harness, sid, quote, turn, note, session, space, user)
+
+
+def _cite(p: Path, s: dict, harness: str, sid: str, quote, turn, note, session, space, user) -> dict:
     session = session or s["session"]
     if not session:
         raise ValueError("this conversation is not tracked yet; its hooks or `integration capture` set its session")
+    # 소속 없는 대화의 착지는 첫 인용이 그 대화에 고정한다(Mechanism §6-2 6항 · §9-4 3항). Person은
+    # 소속 scope가 없을 때만이고(시행령 §2 8항), 고정된 착지와 다른 scope로는 나누지 않는다.
+    # 일회성 작업 공간의 대화는 그 키에 선 결속을 따르지도, 새로 세우지도 않는다.
+    one_off = _one_off(s)
+    bound = None if one_off else write.resolve_session(session)
+    landed = s["space"] or (f"{SCOPE}/{bound}" if bound else None)
+    if not landed:
+        # 기록을 쓰고 착지를 고정하기 전에 끊긴 인용 — 그 대화의 기록이 있는 scope가 착지다
+        found = next((sc for sc in raw._scope_names() if raw.record_path(sc, s["record"]).exists()), None)
+        if found:
+            landed = s["space"] = f"{SCOPE}/{found}"
+            _save(p, s)
+    if raw.is_person(space) and landed:
+        raise ValueError(f"this conversation belongs to {landed}; cite into that scope, not Person Space")
+    if (space and not raw.is_person(space) and landed
+            and raw._scope_of_space(space) != raw._scope_of_space(landed)):
+        raise ValueError(f"this conversation already landed in {landed}; omit space")
     source = _locate_transcript(harness, sid, s.get("capture_path") or s["transcript_path"])
     if not (source and Path(source).is_file()):
         source = None
@@ -1250,9 +1333,16 @@ def cite(conversation: str, quote: str | None = None, turn: str | int | None = N
         # A fork parent's turn keeps its owner: the citation names the parent and joins
         # the parent's record, so the parent citing the same turn reuses that round.
         with _locked(harness, owner) as pp:
-            record = _load(pp, harness, owner)["record"]
+            parent = _load(pp, harness, owner)
+        record = parent["record"]
+        if raw.is_person(space) and (parent["space"] or not _one_off(parent) and parent["session"]
+                                     and write.resolve_session(parent["session"])):
+            raise ValueError("the fork parent belongs to a scope; cite its turn there, not in Person Space")
     result = raw.append_rounds(session, record, [{"user": words, "agent": (note or "").strip()}],
-                               space or s["space"], cited=meta)
+                               space or s["space"], cited=meta, bind=not one_off)
+    if not landed and not raw.is_person(space):
+        s["space"] = f"{SCOPE}/{raw.graph.space_of(core.ROOT / result['path'])[1]}"
+        _save(p, s)
     out = {"ok": True, "round_ref": result["round_refs"][0], "path": result["path"],
            "index": result["indices"][0], "turn": rid, "reused": result.get("reused", False),
            "user_by": by, "agent_sha256": meta["agent_sha256"], "filtered": result["filtered"],
@@ -1381,4 +1471,4 @@ def recent_transcript(harness: str) -> str | None:
 
 def hook_capture(env: dict, session: str) -> dict:
     harness, sid, path = hook_source(env)
-    return capture(harness, sid, path, session, env.get("space"))
+    return capture(harness, sid, path, session, env.get("space"), cwd=env.get("cwd"))

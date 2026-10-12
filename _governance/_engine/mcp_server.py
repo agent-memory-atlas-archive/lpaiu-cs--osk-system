@@ -484,11 +484,11 @@ def record_candidate(type: CandidateType,
 
 @mcp.tool()
 def cite_round(conversation: str, quote: str | None = None, turn: str | None = None,
-               note: str | None = None, user: str | None = None) -> dict:
+               note: str | None = None, user: str | None = None, space: str | None = None) -> dict:
     """근거로 쓸 원본 턴 하나를 남긴다. conversation=훅이 준 <하네스>/<대화 ID>.
     quote(사용자 발화 일부)·turn(ID, -1=최신)으로 고르면 엔진이 발화를 옮긴다 —
     전문을 보내지 않는다. note=요지, user=원본 없을 때만. 같은 턴은 같은 round_ref."""
-    return _guard(integration.cite, conversation, quote, turn, note, user=user)
+    return _guard(integration.cite, conversation, quote, turn, note, space=space, user=user)
 
 
 @mcp.tool()

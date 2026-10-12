@@ -14,7 +14,7 @@
 `_raw/` 쓰기 경로를 두지 않기 위해서다(Mechanism §9).
 """
 from __future__ import annotations
-from .core import SCOPE
+from .core import PERSON, SCOPE
 import json
 import re
 from pathlib import Path
@@ -95,6 +95,26 @@ def record_path(scope: str, record: str) -> Path:
     if legacy.exists():
         return legacy
     return _record_file(ROOT / SCOPE / scope / CITED / f"{record}.md")
+
+
+def is_person(space: str | None) -> bool:
+    """Person Space의 인용 기록 자리를 가리키는 착지인가(`"00_Person"`). 옛 루트 이름(`= Person`·
+    `Person`)으로 적어도 이 vault의 Person 루트로 읽는다."""
+    from .core import SPACE_ROOTS
+    from .layout import adapt_path
+    name = (space or "").strip().strip("/")
+    return bool(name) and "/" not in name and adapt_path(name, SPACE_ROOTS) == PERSON
+
+
+def is_person_record(path: str | None) -> bool:
+    """Person Space의 인용 기록 구획(`00_Person/_cited/`) 안의 기록인가."""
+    return bool(path) and graph.space_of(ROOT / str(path)) == ("raw", PERSON)
+
+
+def person_record_path(record: str) -> Path:
+    """소속 scope 없이 Person 노드를 남긴 세션의 기록(Mechanism §9 5항). 그 세션이 뒤에 scope에
+    속하면 새 라운드는 그 scope의 `_cited/`에 쓰고 이 기록은 그대로 둔다(시행령 §2 8항)."""
+    return _record_file(ROOT / PERSON / CITED / f"{record}.md")
 
 
 def _record_pair(path: Path | str) -> tuple[Path, Path]:
@@ -261,7 +281,7 @@ def storage_error(path: str, text: str) -> str | None:
     """Check a changed raw record, without exposing its payload in diagnostics."""
     p = Path(path)
     if (not any(d in p.parts for d in graph.RECORD_DIRS) or not p.parts
-            or p.parts[0] not in {"00_Scope", "= Scope", "Scope"}):
+            or p.parts[0] not in {"00_Scope", "= Scope", "Scope", "00_Person", "= Person", "Person"}):
         return None
     if p.suffix.lower() == ".md":
         return "visible Markdown raw; migrate to hidden .txt storage"
@@ -273,7 +293,8 @@ def storage_error(path: str, text: str) -> str | None:
 
 def storage_violations() -> list[str]:
     errors = []
-    for directory in sorted(d for name in graph.RECORD_DIRS for d in (ROOT / SCOPE).glob(f"*/{name}")):
+    dirs = [d for name in graph.RECORD_DIRS for d in (ROOT / SCOPE).glob(f"*/{name}")]
+    for directory in sorted(d for d in (*dirs, ROOT / PERSON / CITED) if d.is_dir()):
         for p in directory.rglob("*"):
             if p.is_file() and p.suffix.lower() in {".md", ".txt"}:
                 rel = posix_rel(p, ROOT)
@@ -320,7 +341,7 @@ _CONFINE = ("인용 기록은 세션당 정본 하나이므로(시행령 §2 1�
 
 
 def append_rounds(session: str, record: str, pairs: list,
-                  space: str | None = None, *, cited: dict | None = None) -> dict:
+                  space: str | None = None, *, cited: dict | None = None, bind: bool = True) -> dict:
     """라운드 여럿을 **한 번의 쓰기로** 잇는다. `cited`는 인용 라운드 하나의 원본 턴
     좌표다(Mechanism §9 9항) — 그 라운드는 응답 원문 없이 요지만 둘 수 있고, 같은
     턴의 재인용은 쓰지 않고 기존 좌표를 돌려준다.
@@ -358,21 +379,25 @@ def append_rounds(session: str, record: str, pairs: list,
         raise write.WriteError("세션 키 부적격 — 쓰지 않았다", errs)
 
     with mutation_lock():
-        dest, bound = write.resolve_landing(session, space, _CONFINE)
-        if not dest:
-            raise write.WriteError(
-                "착지 미정 — 쓰지 않았다",
-                [f"세션 `{session}`의 scope 결속이 없다. `space`를 주면 그 자리에 "
-                 f"기록하고 결속을 확정한다. 가능한 space: {_space_list()}"])
-        if dest not in _scope_names():
-            # 결속이 가리키는 scope가 사라진 경우 — `space`는 이미
-            # `resolve_landing`이 검사했으므로 여기 남는 것은 낡은 결속뿐이다.
-            raise write.WriteError(
-                "결속이 가리키는 scope가 없다 — 쓰지 않았다",
-                [f"세션 `{session}`은 `{SCOPE}/{dest}`에 결속돼 있으나 그 scope가 "
-                 f"없다. 가능한 space: {_space_list()}"])
-
-        p = record_path(dest, record)
+        if is_person(space):
+            # Person에는 결속이 없다 — 소속 scope 없는 세션의 기록은 그 대화가 고른다(integration.cite)
+            p, bound = person_record_path(record), True
+        else:
+            # `bind=False`는 일회성 작업 공간의 대화다 — 그 키의 결속을 따르지도 세우지도 않는다
+            dest, bound = write.resolve_landing(session if bind else None, space, _CONFINE)
+            if not dest:
+                raise write.WriteError(
+                    "착지 미정 — 쓰지 않았다",
+                    [f"세션 `{session}`의 scope 결속이 없다. `space`를 주면 그 자리에 "
+                     f"기록하고 결속을 확정한다. 가능한 space: {_space_list()}"])
+            if dest not in _scope_names():
+                # 결속이 가리키는 scope가 사라진 경우 — `space`는 이미
+                # `resolve_landing`이 검사했으므로 여기 남는 것은 낡은 결속뿐이다.
+                raise write.WriteError(
+                    "결속이 가리키는 scope가 없다 — 쓰지 않았다",
+                    [f"세션 `{session}`은 `{SCOPE}/{dest}`에 결속돼 있으나 그 scope가 "
+                     f"없다. 가능한 space: {_space_list()}"])
+            p = record_path(dest, record)
         supersedes = None
         if cited is not None:
             existing = find_cited(p, native_ref(cited["harness"], cited["conversation"], cited["turn"]))
@@ -409,7 +434,7 @@ def append_rounds(session: str, record: str, pairs: list,
                   "filtered": sorted(set(hits))}
         if supersedes:
             result["supersedes"] = supersedes
-        if not bound:
+        if not bound and bind:
             write.bind_after_write(result, session, dest, "첫 세션 기록에서 확정")
         return result
 
@@ -545,15 +570,18 @@ def read_round(ref: str, max_chars: int = 20000, view: str = "full",
 
 
 def list_records(space: str) -> dict:
-    """한 scope의 세션 기록 목록 — 좌표를 모를 때 여기서 시작한다."""
-    scope = _scope_of_space(space)
-    if not scope or scope not in _scope_names():
-        raise write.WriteError(
-            "없는 scope", [f"`{space}`는 scope가 아니다. 가능한 space: "
-                          f"{_space_list()}"])
+    """한 scope(또는 Person Space)의 세션 기록 목록 — 좌표를 모를 때 여기서 시작한다."""
+    if is_person(space):
+        scope, dirs = PERSON, [ROOT / PERSON / CITED]
+    else:
+        scope = _scope_of_space(space)
+        if not scope or scope not in _scope_names():
+            raise write.WriteError(
+                "없는 scope", [f"`{space}`는 scope가 아니다. 가능한 space: "
+                              f"{_space_list()}"])
+        dirs = [ROOT / SCOPE / scope / name for name in graph.RECORD_DIRS]
     out = []
-    files = sorted({f for name in graph.RECORD_DIRS
-                    for d in (ROOT / SCOPE / scope / name,)
+    files = sorted({f for d in dirs
                     for f in (*d.glob("*.md"), *(d / ".records").glob("*.txt"),
                               *(d / ".records").glob("*/record.txt"))})
     for candidate in files:

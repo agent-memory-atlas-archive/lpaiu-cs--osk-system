@@ -210,6 +210,9 @@ def _place_of_parts(parts: tuple) -> tuple:
     if head == DOMAIN:
         return ("domain", parts[1] if len(parts) > 2 else None)
     if head == PERSON:
+        if len(parts) > 1 and parts[1] == RECORD_DIRS[0]:
+            # 소속 scope 없이 Person 노드를 남긴 세션의 인용 기록(Mechanism §1 2항 · 시행령 §2 8항)
+            return ("raw", PERSON)
         return ("person", parts[1] if len(parts) > 2 else None)
     if head == "_governance":
         # 통치 구획 — Space 밖의 상설 구획. 통치 문서·사료는 특수한 노드다
