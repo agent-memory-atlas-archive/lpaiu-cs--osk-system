@@ -355,11 +355,13 @@ def _drive_content(cfg: dict) -> dict:
            body="Zeta belongs to [[W1]]: keep vaults working.", drafter=DRAFTER, session=key,
            edges={"derived-from": "Alpha"}, settle=ev["evicted"])
         ok("update_node", "W1", old_text="[[Beta]]", new_text="[[Beta]] [[Zeta]]")
+        # A v5 engine cites the first turn unless an older engine already stored the dialogue.
         raw2 = (ok("append_raw", key, "matrix-log", "And after an update?",
                    "The same checks, with the new engine.")
                 if hasattr(m, "append_raw") else
-                ok("cite_round", f"claude/{SID}", quote="matrix question 1", note="matrix answer 1"))
-        out["round2"] = raw2["round_ref"]
+                ok("cite_round", f"claude/{SID}", quote="matrix question 1", note="matrix answer 1")
+                if cfg.get("cite") else None)
+        out["round2"] = raw2 and raw2["round_ref"]
         overflow()
         ok("scope_memory", key, edits=[{"old_text": "\n- Scratch note to evict.", "new_text": ""}])
         region = f"{D}/Topic"
@@ -733,7 +735,7 @@ def run_cell(up: Upstream, cand: str, work: Path, start: str, layout: str) -> di
         conv.turn()
         if via:
             _update(vault, start, res["steps"])                  # the via release's updater
-        b = _drive(vault, "content", {**cfg, "phase": "B"})
+        b = _drive(vault, "content", {**cfg, "phase": "B", "cite": not a["round1"]})
         conv.turn()
         facts["content"] = {**a, **b}
         check("S: region clean after its approvals", a["region_A"] == b["region_B"] == "clean",
